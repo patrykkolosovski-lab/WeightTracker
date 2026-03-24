@@ -298,7 +298,7 @@ struct BeFitTabBar: View {
                     )
                     .shadow(color: BeFitTheme.heart.opacity(0.4), radius: 20, y: 10)
             }
-            .offset(y: -24)
+            .offset(y: -12)
         }
     }
 
