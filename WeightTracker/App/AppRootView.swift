@@ -3,6 +3,7 @@ import SwiftUI
 
 struct AppRootView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var store = AppStore()
 
     var body: some View {
@@ -23,6 +24,9 @@ struct AppRootView: View {
         }
         .task {
             store.configureIfNeeded(modelContext: modelContext)
+        }
+        .onChange(of: scenePhase) { _, newValue in
+            store.handleScenePhaseChange(newValue)
         }
         .preferredColorScheme(.dark)
     }

@@ -85,6 +85,9 @@ struct MetricsFormFields: View {
                 }
             }
         }
+        .onChange(of: form.unitSystem) { oldValue, newValue in
+            form.convertDisplayedValues(from: oldValue, to: newValue)
+        }
     }
 }
 

@@ -327,33 +327,42 @@ struct HorseshoeProgressView: View {
     let supportingText: String
 
     var body: some View {
-        ZStack {
-            HorseshoeShape()
-                .stroke(BeFitTheme.elevatedSurface.opacity(0.45), style: StrokeStyle(lineWidth: 24, lineCap: .round))
+        VStack(spacing: 14) {
+            ZStack {
+                HorseshoeShape()
+                    .stroke(BeFitTheme.elevatedSurface.opacity(0.42), style: StrokeStyle(lineWidth: 36, lineCap: .round))
 
-            HorseshoeShape()
-                .trim(from: 0, to: progress.clamped(to: 0...1))
-                .stroke(BeFitTheme.success, style: StrokeStyle(lineWidth: 24, lineCap: .round))
-                .shadow(color: BeFitTheme.success.opacity(0.45), radius: 12, y: 6)
+                HorseshoeShape()
+                    .trim(from: 0, to: progress.clamped(to: 0...1))
+                    .stroke(BeFitTheme.success, style: StrokeStyle(lineWidth: 36, lineCap: .round))
+                    .shadow(color: BeFitTheme.success.opacity(0.45), radius: 12, y: 6)
 
-            VStack(spacing: 6) {
                 Text(centerValue)
-                    .font(.system(size: 68, weight: .heavy, design: .rounded))
+                    .font(.system(size: 60, weight: .heavy, design: .rounded))
                     .foregroundStyle(BeFitTheme.textPrimary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                    .padding(.horizontal, 18)
+                    .offset(y: 37)
+            }
+            .frame(height: 220)
+
+            if !supportingText.isEmpty {
                 Text(supportingText)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
                     .foregroundStyle(BeFitTheme.textSecondary)
             }
-            .offset(y: 20)
         }
-        .frame(height: 190)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 6)
     }
 }
 
 struct HorseshoeShape: Shape {
     func path(in rect: CGRect) -> Path {
-        let center = CGPoint(x: rect.midX, y: rect.maxY * 0.8)
-        let radius = min(rect.width * 0.36, rect.height * 0.68)
+        let center = CGPoint(x: rect.midX, y: rect.maxY * 0.74)
+        let radius = min(rect.width * 0.39, rect.height * 0.62)
 
         var path = Path()
         path.addArc(
@@ -431,6 +440,7 @@ struct GoalDetailsView: View {
     let targetWeight: String
     let targetDateText: String
     let paceText: String
+    let progressText: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -443,6 +453,7 @@ struct GoalDetailsView: View {
                     goalDetailRow(label: "Target Weight", value: targetWeight)
                     goalDetailRow(label: "End Date", value: targetDateText)
                     goalDetailRow(label: "Pace", value: paceText)
+                    goalDetailRow(label: "Progress", value: progressText)
                 } else {
                     goalDetailRow(label: "Direction", value: goalTypeTitle)
                     goalDetailRow(label: "Pace", value: paceText)
@@ -465,6 +476,126 @@ struct GoalDetailsView: View {
                 .font(.system(size: 15, weight: .bold, design: .rounded))
                 .foregroundStyle(BeFitTheme.textPrimary)
         }
+    }
+}
+
+struct ReminderSetupSheetView: View {
+    @Binding var timeSelection: Date
+    let mode: ReminderSetupMode
+    let onConfirm: () -> Void
+    let onSecondary: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 22) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(mode.title)
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .foregroundStyle(BeFitTheme.textPrimary)
+
+                    Text(mode.subtitle)
+                        .font(.system(size: 15, weight: .medium, design: .rounded))
+                        .foregroundStyle(BeFitTheme.textSecondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                BeFitCard {
+                    VStack(alignment: .leading, spacing: 14) {
+                        SectionTitle("Reminder Time", subtitle: "BeFit will use this time every day.")
+
+                        DatePicker(
+                            "Reminder Time",
+                            selection: $timeSelection,
+                            displayedComponents: .hourAndMinute
+                        )
+                        .labelsHidden()
+                        .datePickerStyle(.wheel)
+                        .frame(maxWidth: .infinity)
+                        .clipped()
+                        .colorScheme(.dark)
+                    }
+                }
+
+                PrimaryButton(title: mode.primaryActionTitle, action: onConfirm)
+
+                Button(mode.secondaryActionTitle, action: onSecondary)
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundStyle(BeFitTheme.textSecondary)
+
+                Spacer()
+            }
+            .padding(22)
+        }
+        .presentationDetents([.fraction(0.52)])
+        .presentationBackground(BeFitTheme.backgroundMiddle)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+    }
+}
+
+struct SettingsToggleRow: View {
+    let iconName: String
+    let title: String
+    let subtitle: String?
+    @Binding var isOn: Bool
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: iconName)
+                .foregroundStyle(BeFitTheme.warning)
+                .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .foregroundStyle(BeFitTheme.textPrimary)
+
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(BeFitTheme.textSecondary)
+                }
+            }
+
+            Spacer()
+
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
+                .tint(BeFitTheme.success)
+        }
+        .font(.system(size: 15, weight: .semibold, design: .rounded))
+        .padding(.vertical, 4)
+    }
+}
+
+struct SettingsActionRow: View {
+    let iconName: String
+    let title: String
+    let value: String
+    var accent: Color = BeFitTheme.textPrimary
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: iconName)
+                    .foregroundStyle(accent)
+                    .frame(width: 22)
+
+                Text(title)
+                    .foregroundStyle(BeFitTheme.textPrimary)
+
+                Spacer()
+
+                Text(value)
+                    .foregroundStyle(BeFitTheme.textSecondary)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(BeFitTheme.textSecondary.opacity(0.8))
+            }
+            .font(.system(size: 15, weight: .semibold, design: .rounded))
+            .padding(.vertical, 4)
+        }
+        .buttonStyle(.plain)
     }
 }
 

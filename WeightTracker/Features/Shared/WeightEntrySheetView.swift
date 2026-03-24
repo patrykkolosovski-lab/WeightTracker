@@ -18,7 +18,7 @@ struct WeightEntrySheetView: View {
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .foregroundStyle(BeFitTheme.textSecondary)
 
-                    DatePicker("Date", selection: $form.date, displayedComponents: .date)
+                    DatePicker("Date", selection: $form.date, in: ...Date(), displayedComponents: .date)
                         .datePickerStyle(.graphical)
                         .labelsHidden()
                         .tint(BeFitTheme.heart)

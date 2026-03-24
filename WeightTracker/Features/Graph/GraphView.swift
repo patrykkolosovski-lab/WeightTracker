@@ -31,31 +31,34 @@ struct GraphView: View {
                                 .frame(maxWidth: .infinity, minHeight: 220)
                                 .multilineTextAlignment(.center)
                         } else {
-                            Chart(chartEntries, id: \.entry.id) { item in
-                                AreaMark(
-                                    x: .value("Date", item.entry.date),
-                                    y: .value("Weight", item.displayWeight)
-                                )
-                                .foregroundStyle(
-                                    LinearGradient(
-                                        colors: [BeFitTheme.success.opacity(0.3), .clear],
-                                        startPoint: .top,
-                                        endPoint: .bottom
+                            Chart {
+                                ForEach(chartEntries, id: \.entry.id) { item in
+                                    AreaMark(
+                                        x: .value("Date", item.entry.date),
+                                        y: .value("Weight", item.displayWeight)
                                     )
-                                )
+                                    .foregroundStyle(
+                                        LinearGradient(
+                                            colors: [BeFitTheme.success.opacity(0.3), .clear],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                    )
 
-                                LineMark(
-                                    x: .value("Date", item.entry.date),
-                                    y: .value("Weight", item.displayWeight)
-                                )
-                                .lineStyle(.init(lineWidth: 3, lineCap: .round))
-                                .foregroundStyle(BeFitTheme.success)
+                                    LineMark(
+                                        x: .value("Date", item.entry.date),
+                                        y: .value("Weight", item.displayWeight)
+                                    )
+                                    .lineStyle(.init(lineWidth: 3, lineCap: .round))
+                                    .foregroundStyle(BeFitTheme.success)
 
-                                PointMark(
-                                    x: .value("Date", item.entry.date),
-                                    y: .value("Weight", item.displayWeight)
-                                )
-                                .foregroundStyle(BeFitTheme.textPrimary)
+                                    PointMark(
+                                        x: .value("Date", item.entry.date),
+                                        y: .value("Weight", item.displayWeight)
+                                    )
+                                    .foregroundStyle(BeFitTheme.textPrimary)
+                                }
+
                             }
                             .frame(height: 220)
                             .chartPlotStyle { plotArea in
@@ -63,7 +66,13 @@ struct GraphView: View {
                                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                             }
                             .chartXAxis {
-                                AxisMarks(position: .bottom)
+                                AxisMarks(position: .bottom) { value in
+                                    AxisValueLabel {
+                                        if let dateValue = value.as(Date.self) {
+                                            Text(Formatters.dayMonth.string(from: dateValue))
+                                        }
+                                    }
+                                }
                             }
                             .chartYAxis {
                                 AxisMarks(position: .leading)

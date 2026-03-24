@@ -32,5 +32,27 @@ struct MainShellView: View {
         }) {
             WeightEntrySheetView(store: store)
         }
+        .sheet(isPresented: $store.isReminderSetupPresented) {
+            ReminderSetupSheetView(
+                timeSelection: $store.reminderTimeSelection,
+                mode: store.reminderSetupMode,
+                onConfirm: {
+                    Task {
+                        await store.confirmReminderSetup()
+                    }
+                },
+                onSecondary: {
+                    store.dismissReminderSetup()
+                }
+            )
+        }
+        .alert("Notifications Are Disabled", isPresented: $store.isNotificationSettingsAlertPresented) {
+            Button("Cancel", role: .cancel) {}
+            Button("Open Settings") {
+                store.openSystemSettings()
+            }
+        } message: {
+            Text("Enable notifications for BeFit in iPhone Settings to receive weight reminders.")
+        }
     }
 }

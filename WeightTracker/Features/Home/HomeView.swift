@@ -19,35 +19,39 @@ struct HomeView: View {
                 } else {
                     VStack(spacing: 6) {
                         Text(store.currentWeightDisplay)
-                            .font(.system(size: 80, weight: .heavy, design: .rounded))
+                            .font(.system(size: 60, weight: .heavy, design: .rounded))
                             .foregroundStyle(BeFitTheme.textPrimary)
                             .multilineTextAlignment(.center)
-                        Text(store.goalSummaryDisplay)
-                            .font(.system(size: 14, weight: .semibold, design: .rounded))
-                            .foregroundStyle(BeFitTheme.textSecondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)
+                            .offset(y: 37)
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.top, 8)
+                    .frame(height: 220)
+                    .padding(.top, 6)
                     .padding(.bottom, 10)
                 }
 
-                HStack(spacing: 14) {
-                    statButtonCard(title: "BMI", value: store.bmiDisplay, accent: bmiAccent) {
-                        isBMISheetPresented = true
+                VStack(spacing: 14) {
+                    HStack(spacing: 14) {
+                        statButtonCard(title: "BMI", value: store.bmiDisplay, accent: bmiAccent) {
+                            isBMISheetPresented = true
+                        }
+                        statButtonCard(title: "Weekly Average", value: store.weeklyAverageDisplay, accent: BeFitTheme.textPrimary) {
+                            isWeeklyAverageSheetPresented = true
+                        }
                     }
-                    statButtonCard(title: "Weekly Average", value: store.weeklyAverageDisplay, accent: BeFitTheme.textPrimary) {
-                        isWeeklyAverageSheetPresented = true
-                    }
-                }
 
-                HStack(spacing: 14) {
-                    statButtonCard(title: "Daily Calories", value: store.dailyCaloriesDisplay, accent: BeFitTheme.warning) {
-                        isCaloriesSheetPresented = true
-                    }
-                    statButtonCard(title: store.goalCardTitle, value: store.goalButtonDisplay, accent: BeFitTheme.success) {
-                        isGoalSheetPresented = true
+                    HStack(spacing: 14) {
+                        statButtonCard(title: "Daily Calories", value: store.dailyCaloriesDisplay, accent: BeFitTheme.warning) {
+                            isCaloriesSheetPresented = true
+                        }
+                        statButtonCard(title: store.goalCardTitle, value: store.goalButtonDisplay, accent: BeFitTheme.success) {
+                            isGoalSheetPresented = true
+                        }
                     }
                 }
+                .padding(.top, 26)
 
                 if let targetModeWarning = store.targetModeWarning {
                     BeFitCard {
@@ -69,7 +73,8 @@ struct HomeView: View {
                 goalTypeTitle: store.goalButtonDisplay,
                 targetWeight: store.targetWeightDisplay,
                 targetDateText: store.targetDateDisplay,
-                paceText: store.goalSheetPaceDisplay
+                paceText: store.goalSheetPaceDisplay,
+                progressText: store.targetProgressDisplay
             )
         }
         .sheet(isPresented: $isWeeklyAverageSheetPresented) {
@@ -77,6 +82,9 @@ struct HomeView: View {
         }
         .sheet(isPresented: $isCaloriesSheetPresented) {
             CaloriesInfoView()
+        }
+        .onAppear {
+            store.handleHomeAppeared()
         }
     }
 

@@ -106,6 +106,59 @@ struct MetricsFormState {
             )
         }
     }
+
+    mutating func convertDisplayedValues(from oldUnitSystem: UnitSystem, to newUnitSystem: UnitSystem) {
+        guard oldUnitSystem != newUnitSystem else { return }
+
+        heightText = Self.convertMeasurementText(
+            heightText,
+            from: oldUnitSystem,
+            to: newUnitSystem,
+            toBaseUnit: { value, unitSystem in
+                UnitConverter.heightToCentimeters(value, unitSystem: unitSystem)
+            },
+            fromBaseUnit: { value, unitSystem in
+                UnitConverter.heightToDisplay(value, unitSystem: unitSystem)
+            }
+        )
+
+        currentWeightText = Self.convertMeasurementText(
+            currentWeightText,
+            from: oldUnitSystem,
+            to: newUnitSystem,
+            toBaseUnit: { value, unitSystem in
+                UnitConverter.weightToKilograms(value, unitSystem: unitSystem)
+            },
+            fromBaseUnit: { value, unitSystem in
+                UnitConverter.weightToDisplay(value, unitSystem: unitSystem)
+            }
+        )
+
+        targetWeightText = Self.convertMeasurementText(
+            targetWeightText,
+            from: oldUnitSystem,
+            to: newUnitSystem,
+            toBaseUnit: { value, unitSystem in
+                UnitConverter.weightToKilograms(value, unitSystem: unitSystem)
+            },
+            fromBaseUnit: { value, unitSystem in
+                UnitConverter.weightToDisplay(value, unitSystem: unitSystem)
+            }
+        )
+    }
+
+    private static func convertMeasurementText(
+        _ text: String,
+        from oldUnitSystem: UnitSystem,
+        to newUnitSystem: UnitSystem,
+        toBaseUnit: (Double, UnitSystem) -> Double,
+        fromBaseUnit: (Double, UnitSystem) -> Double
+    ) -> String {
+        guard let value = Double(text.replacingOccurrences(of: ",", with: ".")) else { return text }
+        let baseValue = toBaseUnit(value, oldUnitSystem)
+        let convertedValue = fromBaseUnit(baseValue, newUnitSystem)
+        return Formatters.decimalInput(convertedValue)
+    }
 }
 
 struct WeightEntryFormState {

@@ -1,6 +1,9 @@
 import Combine
 import Foundation
 import SwiftData
+import SwiftUI
+import UIKit
+import UserNotifications
 
 @MainActor
 final class AppStore: ObservableObject {
@@ -8,10 +11,16 @@ final class AppStore: ObservableObject {
     @Published var selectedTab: AppTab = .home
     @Published var activeWeightEntryID: UUID?
     @Published var isWeightEntrySheetPresented = false
+    @Published var isReminderSetupPresented = false
+    @Published var reminderSetupMode: ReminderSetupMode = .firstPrompt
+    @Published var reminderTimeSelection = ReminderPreferencesStore.defaultTimeDate()
+    @Published var isNotificationSettingsAlertPresented = false
 
     @Published private(set) var account: AccountRecord?
     @Published private(set) var profile: ProfileRecord?
     @Published private(set) var entries: [WeightEntryRecord] = []
+    @Published private(set) var reminderAuthorizationStatus: ReminderAuthorizationStatus = .notDetermined
+    @Published private(set) var isDailyReminderEnabled = false
 
     private let sessionKey = "befit.active-session"
     private var isConfigured = false
@@ -19,6 +28,8 @@ final class AppStore: ObservableObject {
     private var authRepository: AuthRepository?
     private var profileRepository: ProfileRepository?
     private var weightRepository: WeightEntryRepository?
+    private let reminderPreferences = ReminderPreferencesStore()
+    private var reminderService: ReminderNotificationService?
 
     func configureIfNeeded(modelContext: ModelContext) {
         guard !isConfigured else { return }
@@ -26,9 +37,12 @@ final class AppStore: ObservableObject {
         authRepository = LocalAuthRepository(modelContext: modelContext)
         profileRepository = LocalProfileRepository(modelContext: modelContext)
         weightRepository = LocalWeightEntryRepository(modelContext: modelContext)
+        reminderService = LocalReminderNotificationService()
         isConfigured = true
 
+        syncReminderPreferences()
         refreshAll()
+        refreshReminderState()
     }
 
     func refreshAll() {
@@ -38,6 +52,7 @@ final class AppStore: ObservableObject {
             account = try authRepository?.fetchAccount()
             profile = try profileRepository?.fetchProfile()
             entries = try weightRepository?.fetchEntries() ?? []
+            syncReminderPreferences()
             updateDestination()
         } catch {
             destination = .auth(.register)
@@ -49,6 +64,7 @@ final class AppStore: ObservableObject {
         try authRepository.register(email: email, password: password)
         setSessionActive(true)
         refreshAll()
+        refreshReminderState()
     }
 
     func login(email: String, password: String) throws {
@@ -56,11 +72,15 @@ final class AppStore: ObservableObject {
         try authRepository.login(email: email, password: password)
         setSessionActive(true)
         refreshAll()
+        refreshReminderState()
     }
 
     func logout() {
         setSessionActive(false)
         refreshAll()
+        Task {
+            await reminderService?.removeAllReminders()
+        }
     }
 
     func saveMetrics(form: MetricsFormState) throws {
@@ -82,6 +102,7 @@ final class AppStore: ObservableObject {
 
         setSessionActive(true)
         refreshAll()
+        refreshReminderState()
     }
 
     func updatePreferredUnitSystem(_ unitSystem: UnitSystem) {
@@ -122,6 +143,12 @@ final class AppStore: ObservableObject {
     }
 
     func saveWeightEntry(form: WeightEntryFormState) throws {
+        let today = Calendar.current.startOfDay(for: .now)
+        let selectedDay = Calendar.current.startOfDay(for: form.date)
+        guard selectedDay <= today else {
+            throw ValidationError.futureWeightEntryDate
+        }
+
         guard let draft = form.makeDraft(source: activeWeightEntryID == nil ? .manual : .metricsAdjustment),
               let weightRepository else {
             throw ValidationError.invalidWeightEntry
@@ -135,6 +162,95 @@ final class AppStore: ObservableObject {
 
         dismissWeightEntrySheet()
         refreshAll()
+        refreshReminderState()
+    }
+
+    func handleHomeAppeared() {
+        guard isInMainDestination else { return }
+        syncReminderPreferences()
+
+        if reminderAuthorizationStatus == .notDetermined,
+           !reminderPreferences.hasHandledInitialPrompt() {
+            reminderSetupMode = .firstPrompt
+            reminderTimeSelection = reminderPreferences.reminderTimeDate()
+            isReminderSetupPresented = true
+            return
+        }
+
+        refreshReminderState()
+    }
+
+    func handleScenePhaseChange(_ scenePhase: ScenePhase) {
+        guard scenePhase == .active else { return }
+        refreshReminderState()
+    }
+
+    func setDailyReminderEnabled(_ isEnabled: Bool) {
+        syncReminderPreferences()
+
+        if !isEnabled {
+            reminderPreferences.setReminderEnabled(false)
+            syncReminderPreferences()
+            Task {
+                await reminderService?.removeAllReminders()
+            }
+            return
+        }
+
+        switch reminderAuthorizationStatus {
+        case .authorized:
+            reminderPreferences.setReminderEnabled(true)
+            syncReminderPreferences()
+            refreshReminderState()
+        case .notDetermined:
+            reminderSetupMode = .firstPrompt
+            reminderTimeSelection = reminderPreferences.reminderTimeDate()
+            isReminderSetupPresented = true
+        case .denied:
+            isNotificationSettingsAlertPresented = true
+        }
+    }
+
+    func presentReminderTimeEditor() {
+        reminderSetupMode = .editTime
+        reminderTimeSelection = reminderPreferences.reminderTimeDate()
+        isReminderSetupPresented = true
+    }
+
+    func dismissReminderSetup() {
+        if reminderSetupMode == .firstPrompt {
+            reminderPreferences.setReminderTime(reminderTimeSelection)
+            reminderPreferences.setHasHandledInitialPrompt(true)
+            syncReminderPreferences()
+        }
+
+        isReminderSetupPresented = false
+    }
+
+    func confirmReminderSetup() async {
+        reminderPreferences.setReminderTime(reminderTimeSelection)
+
+        switch reminderSetupMode {
+        case .firstPrompt:
+            reminderPreferences.setHasHandledInitialPrompt(true)
+            let status = await requestReminderAuthorizationIfNeeded()
+            if status == .authorized {
+                reminderPreferences.setReminderEnabled(true)
+            } else {
+                reminderPreferences.setReminderEnabled(false)
+            }
+        case .editTime:
+            break
+        }
+
+        syncReminderPreferences()
+        isReminderSetupPresented = false
+        await rebuildReminderSchedule()
+    }
+
+    func openSystemSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
     }
 
     func entryForEditing() -> WeightEntryRecord? {
@@ -148,6 +264,25 @@ final class AppStore: ObservableObject {
 
     var unitSystem: UnitSystem {
         profile?.preferredUnitSystem ?? .metric
+    }
+
+    var reminderTimeDisplay: String {
+        Formatters.time.string(from: reminderPreferences.reminderTimeDate())
+    }
+
+    var reminderPermissionDisplay: String {
+        switch reminderAuthorizationStatus {
+        case .authorized:
+            return "Allowed"
+        case .notDetermined:
+            return "Not requested"
+        case .denied:
+            return "Blocked"
+        }
+    }
+
+    var shouldShowNotificationRecovery: Bool {
+        reminderAuthorizationStatus == .denied
     }
 
     var currentWeightKilograms: Double? {
@@ -238,6 +373,13 @@ final class AppStore: ObservableObject {
             currentWeightKilograms: currentWeightKilograms,
             effectiveGoal: effectiveGoal
         )
+    }
+
+    var targetProgressDisplay: String {
+        guard isTargetMode else { return "--" }
+        let percentage = progressValue * 100
+        let text = Formatters.compactDecimal.string(from: NSNumber(value: percentage)) ?? "0"
+        return "\(text)%"
     }
 
     var effectiveGoal: EffectiveGoal? {
@@ -372,11 +514,75 @@ final class AppStore: ObservableObject {
     private func setSessionActive(_ isActive: Bool) {
         UserDefaults.standard.set(isActive, forKey: sessionKey)
     }
+
+    private var isInMainDestination: Bool {
+        if case .main = destination {
+            return true
+        }
+        return false
+    }
+
+    private func syncReminderPreferences() {
+        isDailyReminderEnabled = reminderPreferences.isReminderEnabled()
+        reminderTimeSelection = reminderPreferences.reminderTimeDate()
+    }
+
+    private func refreshReminderState() {
+        Task {
+            await refreshReminderAuthorizationStatus()
+            await rebuildReminderSchedule()
+        }
+    }
+
+    private func refreshReminderAuthorizationStatus() async {
+        guard let reminderService else { return }
+        reminderAuthorizationStatus = await reminderService.authorizationStatus()
+    }
+
+    private func requestReminderAuthorizationIfNeeded() async -> ReminderAuthorizationStatus {
+        guard let reminderService else { return .denied }
+
+        let currentStatus = await reminderService.authorizationStatus()
+        switch currentStatus {
+        case .authorized, .denied:
+            reminderAuthorizationStatus = currentStatus
+            return currentStatus
+        case .notDetermined:
+            let requestedStatus = await reminderService.requestAuthorization()
+            reminderAuthorizationStatus = requestedStatus
+            return requestedStatus
+        }
+    }
+
+    private func rebuildReminderSchedule() async {
+        guard let reminderService else { return }
+
+        syncReminderPreferences()
+
+        guard isInMainDestination,
+              hasAccount,
+              profile != nil,
+              isDailyReminderEnabled,
+              reminderAuthorizationStatus == .authorized else {
+            await reminderService.removeAllReminders()
+            return
+        }
+
+        let reminderDates = ReminderPlanner.scheduleDates(
+            now: .now,
+            preferredTime: reminderPreferences.reminderTimeComponents(),
+            entries: entries,
+            horizonDays: 60
+        )
+
+        await reminderService.replaceReminders(dates: reminderDates)
+    }
 }
 
 enum ValidationError: LocalizedError {
     case invalidMetrics
     case invalidWeightEntry
+    case futureWeightEntryDate
 
     var errorDescription: String? {
         switch self {
@@ -384,6 +590,8 @@ enum ValidationError: LocalizedError {
             return "Please complete all body metrics with valid values."
         case .invalidWeightEntry:
             return "Please enter a valid weight before saving."
+        case .futureWeightEntryDate:
+            return "Future dates are not allowed. Please select today or an earlier date."
         }
     }
 }
@@ -393,4 +601,220 @@ struct WeeklyAverageRow: Identifiable {
     let value: String
 
     var id: Date { date }
+}
+
+enum ReminderSetupMode {
+    case firstPrompt
+    case editTime
+
+    var title: String {
+        switch self {
+        case .firstPrompt:
+            return "Daily Reminders"
+        case .editTime:
+            return "Reminder Time"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .firstPrompt:
+            return "Choose when BeFit should remind you to log your weight."
+        case .editTime:
+            return "Update the time BeFit should remind you each day."
+        }
+    }
+
+    var primaryActionTitle: String {
+        switch self {
+        case .firstPrompt:
+            return "Allow Notifications"
+        case .editTime:
+            return "Save Time"
+        }
+    }
+
+    var secondaryActionTitle: String {
+        switch self {
+        case .firstPrompt:
+            return "Not Now"
+        case .editTime:
+            return "Cancel"
+        }
+    }
+}
+
+enum ReminderAuthorizationStatus {
+    case notDetermined
+    case authorized
+    case denied
+}
+
+struct ReminderPreferencesStore {
+    private let enabledKey = "befit.reminders.enabled"
+    private let hourKey = "befit.reminders.hour"
+    private let minuteKey = "befit.reminders.minute"
+    private let promptHandledKey = "befit.reminders.prompt-handled"
+
+    func isReminderEnabled() -> Bool {
+        UserDefaults.standard.bool(forKey: enabledKey)
+    }
+
+    func setReminderEnabled(_ isEnabled: Bool) {
+        UserDefaults.standard.set(isEnabled, forKey: enabledKey)
+    }
+
+    func hasHandledInitialPrompt() -> Bool {
+        UserDefaults.standard.bool(forKey: promptHandledKey)
+    }
+
+    func setHasHandledInitialPrompt(_ hasHandled: Bool) {
+        UserDefaults.standard.set(hasHandled, forKey: promptHandledKey)
+    }
+
+    func reminderTimeComponents() -> DateComponents {
+        let storedHour = UserDefaults.standard.object(forKey: hourKey) as? Int
+        let storedMinute = UserDefaults.standard.object(forKey: minuteKey) as? Int
+
+        return DateComponents(
+            hour: storedHour ?? 8,
+            minute: storedMinute ?? 0
+        )
+    }
+
+    func reminderTimeDate() -> Date {
+        let calendar = Calendar.current
+        let now = Date()
+        let components = reminderTimeComponents()
+        return calendar.date(
+            bySettingHour: components.hour ?? 8,
+            minute: components.minute ?? 0,
+            second: 0,
+            of: now
+        ) ?? now
+    }
+
+    func setReminderTime(_ date: Date) {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+        UserDefaults.standard.set(components.hour ?? 8, forKey: hourKey)
+        UserDefaults.standard.set(components.minute ?? 0, forKey: minuteKey)
+    }
+
+    static func defaultTimeDate() -> Date {
+        ReminderPreferencesStore().reminderTimeDate()
+    }
+}
+
+enum ReminderPlanner {
+    static func scheduleDates(
+        now: Date,
+        preferredTime: DateComponents,
+        entries: [WeightEntryRecord],
+        horizonDays: Int
+    ) -> [Date] {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: now)
+        let loggedDays = Set(entries.map { calendar.startOfDay(for: $0.date) })
+
+        return (0..<horizonDays).compactMap { offset in
+            guard let day = calendar.date(byAdding: .day, value: offset, to: today),
+                  !loggedDays.contains(day),
+                  let scheduledDate = calendar.date(
+                    bySettingHour: preferredTime.hour ?? 8,
+                    minute: preferredTime.minute ?? 0,
+                    second: 0,
+                    of: day
+                  ),
+                  scheduledDate > now else {
+                return nil
+            }
+
+            return scheduledDate
+        }
+    }
+}
+
+protocol ReminderNotificationService {
+    func authorizationStatus() async -> ReminderAuthorizationStatus
+    func requestAuthorization() async -> ReminderAuthorizationStatus
+    func replaceReminders(dates: [Date]) async
+    func removeAllReminders() async
+}
+
+struct LocalReminderNotificationService: ReminderNotificationService {
+    private let center: UNUserNotificationCenter
+    private let identifierPrefix = "befit.weight-reminder."
+
+    init(center: UNUserNotificationCenter = .current()) {
+        self.center = center
+    }
+
+    func authorizationStatus() async -> ReminderAuthorizationStatus {
+        let settings = await notificationSettings()
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            return .authorized
+        case .denied:
+            return .denied
+        case .notDetermined:
+            return .notDetermined
+        @unknown default:
+            return .denied
+        }
+    }
+
+    func requestAuthorization() async -> ReminderAuthorizationStatus {
+        let granted = await withCheckedContinuation { continuation in
+            center.requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
+                continuation.resume(returning: granted)
+            }
+        }
+
+        if granted {
+            return .authorized
+        }
+
+        return await authorizationStatus()
+    }
+
+    func replaceReminders(dates: [Date]) async {
+        await removeAllReminders()
+
+        let calendar = Calendar.current
+
+        for date in dates {
+            let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+            let content = UNMutableNotificationContent()
+            content.title = "Log your weight"
+            content.body = "Open BeFit and add today's check-in."
+            content.sound = .default
+
+            let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+            let identifier = "\(identifierPrefix)\(Int(date.timeIntervalSince1970))"
+            let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+            try? await center.add(request)
+        }
+    }
+
+    func removeAllReminders() async {
+        let pendingRequests = await pendingRequests()
+        let identifiers = pendingRequests.map(\.identifier).filter { $0.hasPrefix(identifierPrefix) }
+        center.removePendingNotificationRequests(withIdentifiers: identifiers)
+    }
+
+    private func notificationSettings() async -> UNNotificationSettings {
+        await withCheckedContinuation { continuation in
+            center.getNotificationSettings { settings in
+                continuation.resume(returning: settings)
+            }
+        }
+    }
+
+    private func pendingRequests() async -> [UNNotificationRequest] {
+        await withCheckedContinuation { continuation in
+            center.getPendingNotificationRequests { requests in
+                continuation.resume(returning: requests)
+            }
+        }
+    }
 }

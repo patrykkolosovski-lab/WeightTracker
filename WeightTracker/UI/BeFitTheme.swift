@@ -48,6 +48,18 @@ enum Formatters {
         return formatter
     }()
 
+    static let time: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    static let dayMonth: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "dd/MM"
+        return formatter
+    }()
+
     static func decimalInput(_ value: Double) -> String {
         compactDecimal.string(from: NSNumber(value: value)) ?? String(format: "%.1f", value)
     }
