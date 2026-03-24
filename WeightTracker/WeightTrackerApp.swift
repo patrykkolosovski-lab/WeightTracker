@@ -5,6 +5,7 @@
 //  Created by Patryk Kolosovski on 24/03/2026.
 //
 
+import SwiftData
 import SwiftUI
 
 @main
@@ -13,5 +14,6 @@ struct WeightTrackerApp: App {
         WindowGroup {
             ContentView()
         }
+        .modelContainer(for: [AccountRecord.self, ProfileRecord.self, WeightEntryRecord.self])
     }
 }

@@ -1,0 +1,13 @@
+.DS_Store
+
+# Xcode user and local build data
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+
+# Swift Package Manager
+.build/
+
+# Local tooling
+.codex/
