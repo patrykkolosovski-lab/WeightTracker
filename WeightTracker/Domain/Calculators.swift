@@ -1,5 +1,13 @@
 import Foundation
 
+struct EffectiveGoal {
+    let goalType: GoalType
+    let weeklyPaceKilograms: Double?
+    let targetWeightKilograms: Double?
+    let targetDate: Date?
+    let isAggressiveWarning: Bool
+}
+
 enum BMICalculator {
     static func value(weightKilograms: Double, heightCentimeters: Double) -> Double? {
         guard weightKilograms > 0, heightCentimeters > 0 else { return nil }
@@ -15,7 +23,7 @@ enum CalorieCalculator {
         weightKilograms: Double,
         activityLevel: ActivityLevel,
         formulaSex: FormulaSex,
-        goalType: GoalType
+        effectiveGoal: EffectiveGoal
     ) -> Int? {
         guard age > 0, heightCentimeters > 0, weightKilograms > 0 else { return nil }
 
@@ -24,11 +32,13 @@ enum CalorieCalculator {
         let maintenanceCalories = bmr * activityLevel.multiplier
 
         let adjustedCalories: Double
-        switch goalType {
+        switch effectiveGoal.goalType {
         case .loss:
-            adjustedCalories = maintenanceCalories - 500
+            let pace = effectiveGoal.weeklyPaceKilograms ?? WeeklyPaceOption.half.kilogramsPerWeek
+            adjustedCalories = maintenanceCalories - ((pace * 7_700) / 7)
         case .gain:
-            adjustedCalories = maintenanceCalories + 300
+            let pace = effectiveGoal.weeklyPaceKilograms ?? WeeklyPaceOption.half.kilogramsPerWeek
+            adjustedCalories = maintenanceCalories + ((pace * 7_700) / 7)
         case .maintenance:
             adjustedCalories = maintenanceCalories
         }
@@ -41,12 +51,13 @@ enum GoalProgressCalculator {
     static func progress(
         startWeightKilograms: Double?,
         currentWeightKilograms: Double?,
-        targetWeightKilograms: Double,
-        goalType: GoalType
+        effectiveGoal: EffectiveGoal?
     ) -> Double {
-        guard let currentWeightKilograms else { return 0 }
+        guard let currentWeightKilograms,
+              let effectiveGoal,
+              let targetWeightKilograms = effectiveGoal.targetWeightKilograms else { return 0 }
 
-        switch goalType {
+        switch effectiveGoal.goalType {
         case .loss:
             guard let startWeightKilograms, startWeightKilograms > targetWeightKilograms else { return 0 }
             let value = (startWeightKilograms - currentWeightKilograms) / (startWeightKilograms - targetWeightKilograms)
@@ -59,6 +70,47 @@ enum GoalProgressCalculator {
             let delta = abs(currentWeightKilograms - targetWeightKilograms)
             if delta <= 0.5 { return 1 }
             return (1 - ((delta - 0.5) / 4.5)).clamped(to: 0...1)
+        }
+    }
+}
+
+enum GoalLogic {
+    static func effectiveGoal(
+        currentWeightKilograms: Double,
+        configuration: GoalConfiguration,
+        referenceDate: Date = .now
+    ) -> EffectiveGoal? {
+        switch configuration.mode {
+        case .generic:
+            let goalType = configuration.genericGoalType
+            let pace = goalType == .maintenance ? nil : (configuration.weeklyPaceKilograms ?? WeeklyPaceOption.half.kilogramsPerWeek)
+            return EffectiveGoal(
+                goalType: goalType,
+                weeklyPaceKilograms: pace,
+                targetWeightKilograms: nil,
+                targetDate: nil,
+                isAggressiveWarning: false
+            )
+
+        case .target:
+            guard let targetDate = configuration.targetDate else { return nil }
+
+            let delta = configuration.targetWeightKilograms - currentWeightKilograms
+            if abs(delta) < 0.01 {
+                return nil
+            }
+
+            let weeks = max(targetDate.timeIntervalSince(referenceDate) / (86_400 * 7), 0.01)
+            let pace = abs(delta) / weeks
+            let goalType: GoalType = delta < 0 ? .loss : .gain
+
+            return EffectiveGoal(
+                goalType: goalType,
+                weeklyPaceKilograms: pace,
+                targetWeightKilograms: configuration.targetWeightKilograms,
+                targetDate: targetDate,
+                isAggressiveWarning: pace > WeeklyPaceOption.one.kilogramsPerWeek
+            )
         }
     }
 }

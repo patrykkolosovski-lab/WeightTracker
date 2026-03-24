@@ -15,7 +15,7 @@ enum RootDestination {
 enum AppTab: String, CaseIterable, Identifiable {
     case home = "Home"
     case graph = "Graph"
-    case metrics = "Body Metrics"
+    case metrics = "Metrics"
     case settings = "Settings"
 
     var id: String { rawValue }
@@ -75,6 +75,51 @@ enum GoalType: String, CaseIterable, Identifiable {
         case .maintenance:
             return "Maintenance"
         }
+    }
+}
+
+enum GoalMode: String, CaseIterable, Identifiable {
+    case target
+    case generic
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .target:
+            return "Target"
+        case .generic:
+            return "Generic"
+        }
+    }
+}
+
+enum WeeklyPaceOption: String, CaseIterable, Identifiable {
+    case quarter = "0.25 kg/w"
+    case half = "0.5 kg/w"
+    case threeQuarter = "0.75 kg/w"
+    case one = "1.0 kg/w"
+
+    var id: String { rawValue }
+
+    var kilogramsPerWeek: Double {
+        switch self {
+        case .quarter:
+            return 0.25
+        case .half:
+            return 0.5
+        case .threeQuarter:
+            return 0.75
+        case .one:
+            return 1.0
+        }
+    }
+
+    static func from(kilogramsPerWeek: Double?) -> WeeklyPaceOption {
+        guard let kilogramsPerWeek else { return .half }
+        return allCases.min(by: {
+            abs($0.kilogramsPerWeek - kilogramsPerWeek) < abs($1.kilogramsPerWeek - kilogramsPerWeek)
+        }) ?? .half
     }
 }
 
@@ -170,9 +215,20 @@ struct MetricsInput {
     let currentWeightKilograms: Double
     let targetWeightKilograms: Double
     let activityLevel: ActivityLevel
-    let goalType: GoalType
+    let goalMode: GoalMode
+    let genericGoalType: GoalType
+    let weeklyPaceKilograms: Double?
+    let targetDate: Date?
     let formulaSex: FormulaSex
     let unitSystem: UnitSystem
+}
+
+struct GoalConfiguration {
+    let mode: GoalMode
+    let genericGoalType: GoalType
+    let weeklyPaceKilograms: Double?
+    let targetWeightKilograms: Double
+    let targetDate: Date?
 }
 
 struct WeightEntryDraft {

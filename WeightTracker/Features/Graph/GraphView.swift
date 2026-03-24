@@ -9,6 +9,12 @@ struct GraphView: View {
         store.entries(for: selectedTimeframe)
     }
 
+    private var chartEntries: [(entry: WeightEntryRecord, displayWeight: Double)] {
+        filteredEntries.map { entry in
+            (entry, UnitConverter.weightToDisplay(entry.weightKilograms, unitSystem: store.unitSystem))
+        }
+    }
+
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 18) {
@@ -25,10 +31,10 @@ struct GraphView: View {
                                 .frame(maxWidth: .infinity, minHeight: 220)
                                 .multilineTextAlignment(.center)
                         } else {
-                            Chart(filteredEntries) { entry in
+                            Chart(chartEntries, id: \.entry.id) { item in
                                 AreaMark(
-                                    x: .value("Date", entry.date),
-                                    y: .value("Weight", entry.weightKilograms)
+                                    x: .value("Date", item.entry.date),
+                                    y: .value("Weight", item.displayWeight)
                                 )
                                 .foregroundStyle(
                                     LinearGradient(
@@ -39,22 +45,30 @@ struct GraphView: View {
                                 )
 
                                 LineMark(
-                                    x: .value("Date", entry.date),
-                                    y: .value("Weight", entry.weightKilograms)
+                                    x: .value("Date", item.entry.date),
+                                    y: .value("Weight", item.displayWeight)
                                 )
                                 .lineStyle(.init(lineWidth: 3, lineCap: .round))
                                 .foregroundStyle(BeFitTheme.success)
 
                                 PointMark(
-                                    x: .value("Date", entry.date),
-                                    y: .value("Weight", entry.weightKilograms)
+                                    x: .value("Date", item.entry.date),
+                                    y: .value("Weight", item.displayWeight)
                                 )
                                 .foregroundStyle(BeFitTheme.textPrimary)
                             }
                             .frame(height: 220)
+                            .chartPlotStyle { plotArea in
+                                plotArea
+                                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            }
+                            .chartXAxis {
+                                AxisMarks(position: .bottom)
+                            }
                             .chartYAxis {
                                 AxisMarks(position: .leading)
                             }
+                            .chartYScale(domain: yDomain)
                             .chartYAxisLabel(position: .leading) {
                                 Text(store.unitSystem.weightUnit.uppercased())
                                     .font(.system(size: 11, weight: .bold, design: .rounded))
@@ -114,6 +128,17 @@ struct GraphView: View {
         let start = filteredEntries.first?.date ?? Calendar.current.date(byAdding: .day, value: -7, to: .now) ?? .now
         let end = filteredEntries.last?.date ?? .now
         return start...max(end, .now)
+    }
+
+    private var yDomain: ClosedRange<Double> {
+        let weights = chartEntries.map(\.displayWeight)
+        guard let minWeight = weights.min(), let maxWeight = weights.max() else {
+            return 0...100
+        }
+
+        let lowerBound = max(0, floor(minWeight - 5))
+        let upperBound = ceil(maxWeight + 5)
+        return lowerBound...max(upperBound, lowerBound + 1)
     }
 
     private var timeframeSelector: some View {

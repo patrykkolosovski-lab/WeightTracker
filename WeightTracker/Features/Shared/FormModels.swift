@@ -5,8 +5,11 @@ struct MetricsFormState {
     var heightText: String
     var currentWeightText: String
     var targetWeightText: String
+    var targetDate: Date
     var activityLevel: ActivityLevel
-    var goalType: GoalType
+    var goalMode: GoalMode
+    var genericGoalType: GoalType
+    var weeklyPaceOption: WeeklyPaceOption
     var formulaSex: FormulaSex
     var unitSystem: UnitSystem
 
@@ -16,8 +19,11 @@ struct MetricsFormState {
             heightText: "",
             currentWeightText: "",
             targetWeightText: "",
+            targetDate: Calendar.current.date(byAdding: .month, value: 3, to: .now) ?? .now,
             activityLevel: .moderate,
-            goalType: .loss,
+            goalMode: .generic,
+            genericGoalType: .loss,
+            weeklyPaceOption: .half,
             formulaSex: .female,
             unitSystem: unitSystem
         )
@@ -37,8 +43,11 @@ struct MetricsFormState {
             targetWeightText: profile.map {
                 Formatters.decimalInput(UnitConverter.weightToDisplay($0.targetWeightKilograms, unitSystem: unitSystem))
             } ?? "",
+            targetDate: profile?.targetDate ?? (Calendar.current.date(byAdding: .month, value: 3, to: .now) ?? .now),
             activityLevel: profile?.activityLevel ?? .moderate,
-            goalType: profile?.goalType ?? .loss,
+            goalMode: profile?.goalMode ?? .generic,
+            genericGoalType: profile?.goalType ?? .loss,
+            weeklyPaceOption: WeeklyPaceOption.from(kilogramsPerWeek: profile?.resolvedWeeklyPaceKilograms),
             formulaSex: profile?.formulaSex ?? .female,
             unitSystem: unitSystem
         )
@@ -48,21 +57,54 @@ struct MetricsFormState {
         guard let age = Int(ageText),
               let height = Double(heightText.replacingOccurrences(of: ",", with: ".")),
               let currentWeight = Double(currentWeightText.replacingOccurrences(of: ",", with: ".")),
-              let targetWeight = Double(targetWeightText.replacingOccurrences(of: ",", with: ".")),
-              age > 0, height > 0, currentWeight > 0, targetWeight > 0 else {
+              age > 0, height > 0, currentWeight > 0 else {
             return nil
         }
 
-        return MetricsInput(
-            age: age,
-            heightCentimeters: UnitConverter.heightToCentimeters(height, unitSystem: unitSystem),
-            currentWeightKilograms: UnitConverter.weightToKilograms(currentWeight, unitSystem: unitSystem),
-            targetWeightKilograms: UnitConverter.weightToKilograms(targetWeight, unitSystem: unitSystem),
-            activityLevel: activityLevel,
-            goalType: goalType,
-            formulaSex: formulaSex,
-            unitSystem: unitSystem
-        )
+        let currentWeightKilograms = UnitConverter.weightToKilograms(currentWeight, unitSystem: unitSystem)
+        let heightCentimeters = UnitConverter.heightToCentimeters(height, unitSystem: unitSystem)
+        let parsedTargetWeight = Double(targetWeightText.replacingOccurrences(of: ",", with: "."))
+
+        switch goalMode {
+        case .target:
+            guard let targetWeight = parsedTargetWeight, targetWeight > 0 else { return nil }
+            let targetWeightKilograms = UnitConverter.weightToKilograms(targetWeight, unitSystem: unitSystem)
+            let targetDay = Calendar.current.startOfDay(for: targetDate)
+            let tomorrow = Calendar.current.startOfDay(for: Calendar.current.date(byAdding: .day, value: 1, to: .now) ?? .now)
+            guard targetDay >= tomorrow, abs(targetWeightKilograms - currentWeightKilograms) > 0.01 else { return nil }
+
+            return MetricsInput(
+                age: age,
+                heightCentimeters: heightCentimeters,
+                currentWeightKilograms: currentWeightKilograms,
+                targetWeightKilograms: targetWeightKilograms,
+                activityLevel: activityLevel,
+                goalMode: .target,
+                genericGoalType: targetWeightKilograms < currentWeightKilograms ? .loss : .gain,
+                weeklyPaceKilograms: nil,
+                targetDate: targetDay,
+                formulaSex: formulaSex,
+                unitSystem: unitSystem
+            )
+        case .generic:
+            let targetWeightKilograms = parsedTargetWeight.map {
+                UnitConverter.weightToKilograms($0, unitSystem: unitSystem)
+            } ?? currentWeightKilograms
+
+            return MetricsInput(
+                age: age,
+                heightCentimeters: heightCentimeters,
+                currentWeightKilograms: currentWeightKilograms,
+                targetWeightKilograms: targetWeightKilograms,
+                activityLevel: activityLevel,
+                goalMode: .generic,
+                genericGoalType: genericGoalType,
+                weeklyPaceKilograms: genericGoalType == .maintenance ? nil : weeklyPaceOption.kilogramsPerWeek,
+                targetDate: nil,
+                formulaSex: formulaSex,
+                unitSystem: unitSystem
+            )
+        }
     }
 }
 

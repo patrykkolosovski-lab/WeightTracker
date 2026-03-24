@@ -24,6 +24,7 @@ struct AppRootView: View {
         .task {
             store.configureIfNeeded(modelContext: modelContext)
         }
+        .preferredColorScheme(.dark)
     }
 }
 

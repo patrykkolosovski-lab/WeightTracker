@@ -14,8 +14,13 @@ struct WeightEntrySheetView: View {
         NavigationStack {
             VStack(spacing: 22) {
                 VStack(alignment: .leading, spacing: 16) {
+                    Text("Date")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(BeFitTheme.textSecondary)
+
                     DatePicker("Date", selection: $form.date, displayedComponents: .date)
                         .datePickerStyle(.graphical)
+                        .labelsHidden()
                         .tint(BeFitTheme.heart)
                         .foregroundStyle(BeFitTheme.textPrimary)
 
@@ -75,6 +80,9 @@ struct WeightEntrySheetView: View {
         }
         .presentationDetents([.large])
         .presentationBackground(BeFitTheme.backgroundMiddle)
+        .toolbarBackground(BeFitTheme.backgroundMiddle, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
         .onAppear {
             form = store.weightEntryFormState()
         }

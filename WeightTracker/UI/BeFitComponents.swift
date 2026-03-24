@@ -298,7 +298,7 @@ struct BeFitTabBar: View {
                     )
                     .shadow(color: BeFitTheme.heart.opacity(0.4), radius: 20, y: 10)
             }
-            .offset(y: -12)
+            .offset(y: 5)
         }
     }
 
@@ -323,35 +323,37 @@ struct BeFitTabBar: View {
 
 struct HorseshoeProgressView: View {
     let progress: Double
+    let centerValue: String
+    let supportingText: String
 
     var body: some View {
         ZStack {
             HorseshoeShape()
-                .stroke(BeFitTheme.elevatedSurface.opacity(0.45), style: StrokeStyle(lineWidth: 18, lineCap: .round))
+                .stroke(BeFitTheme.elevatedSurface.opacity(0.45), style: StrokeStyle(lineWidth: 24, lineCap: .round))
 
             HorseshoeShape()
                 .trim(from: 0, to: progress.clamped(to: 0...1))
-                .stroke(BeFitTheme.success, style: StrokeStyle(lineWidth: 18, lineCap: .round))
+                .stroke(BeFitTheme.success, style: StrokeStyle(lineWidth: 24, lineCap: .round))
                 .shadow(color: BeFitTheme.success.opacity(0.45), radius: 12, y: 6)
 
             VStack(spacing: 6) {
-                Text("\(Int((progress * 100).rounded()))%")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                Text(centerValue)
+                    .font(.system(size: 68, weight: .heavy, design: .rounded))
                     .foregroundStyle(BeFitTheme.textPrimary)
-                Text("to target")
+                Text(supportingText)
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .foregroundStyle(BeFitTheme.textSecondary)
             }
             .offset(y: 20)
         }
-        .frame(height: 160)
+        .frame(height: 190)
     }
 }
 
 struct HorseshoeShape: Shape {
     func path(in rect: CGRect) -> Path {
-        let center = CGPoint(x: rect.midX, y: rect.maxY * 0.85)
-        let radius = min(rect.width * 0.38, rect.height * 0.78)
+        let center = CGPoint(x: rect.midX, y: rect.maxY * 0.8)
+        let radius = min(rect.width * 0.36, rect.height * 0.68)
 
         var path = Path()
         path.addArc(

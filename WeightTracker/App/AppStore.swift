@@ -95,7 +95,10 @@ final class AppStore: ObservableObject {
             currentWeightKilograms: latestWeightKilograms,
             targetWeightKilograms: currentProfile.targetWeightKilograms,
             activityLevel: currentProfile.activityLevel,
-            goalType: currentProfile.goalType,
+            goalMode: currentProfile.goalMode,
+            genericGoalType: currentProfile.goalType,
+            weeklyPaceKilograms: currentProfile.resolvedWeeklyPaceKilograms,
+            targetDate: currentProfile.targetDate,
             formulaSex: currentProfile.formulaSex,
             unitSystem: unitSystem
         )
@@ -191,7 +194,7 @@ final class AppStore: ObservableObject {
     }
 
     var dailyCaloriesDisplay: String {
-        guard let profile, let currentWeightKilograms else { return "--" }
+        guard let profile, let currentWeightKilograms, let effectiveGoal else { return "--" }
 
         guard let calories = CalorieCalculator.dailyTarget(
             age: profile.age,
@@ -199,7 +202,7 @@ final class AppStore: ObservableObject {
             weightKilograms: currentWeightKilograms,
             activityLevel: profile.activityLevel,
             formulaSex: profile.formulaSex,
-            goalType: profile.goalType
+            effectiveGoal: effectiveGoal
         ) else {
             return "--"
         }
@@ -208,29 +211,64 @@ final class AppStore: ObservableObject {
     }
 
     var progressValue: Double {
-        guard let profile else { return 0 }
+        guard profile?.goalMode == .target else { return 0 }
 
         return GoalProgressCalculator.progress(
             startWeightKilograms: startingWeightKilograms,
             currentWeightKilograms: currentWeightKilograms,
-            targetWeightKilograms: profile.targetWeightKilograms,
-            goalType: profile.goalType
+            effectiveGoal: effectiveGoal
         )
     }
 
-    var progressSubtitle: String {
-        guard let profile, let currentWeightKilograms else { return "Target unavailable" }
+    var effectiveGoal: EffectiveGoal? {
+        guard let profile, let currentWeightKilograms else { return nil }
+        return GoalLogic.effectiveGoal(
+            currentWeightKilograms: currentWeightKilograms,
+            configuration: profile.goalConfiguration,
+            referenceDate: .now
+        )
+    }
 
-        let delta = abs(currentWeightKilograms - profile.targetWeightKilograms)
-        let displayDelta = UnitConverter.weightToDisplay(delta, unitSystem: unitSystem)
-        let formattedDelta = Formatters.compactDecimal.string(from: NSNumber(value: displayDelta)) ?? "0"
+    var isTargetMode: Bool {
+        profile?.goalMode == .target
+    }
+
+    var goalCardTitle: String {
+        isTargetMode ? "Target" : "Goal"
+    }
+
+    var goalSummaryDisplay: String {
+        guard let profile else { return "--" }
+
+        if profile.goalMode == .target {
+            if let targetDate = profile.targetDate {
+                return "\(targetWeightDisplay) by \(Formatters.date.string(from: targetDate))"
+            }
+            return targetWeightDisplay
+        }
 
         switch profile.goalType {
         case .maintenance:
-            return "\(formattedDelta) \(unitSystem.weightUnit) from target"
+            return GoalType.maintenance.title
         case .loss, .gain:
-            return "\(formattedDelta) \(unitSystem.weightUnit) remaining"
+            let pace = profile.resolvedWeeklyPaceKilograms ?? WeeklyPaceOption.half.kilogramsPerWeek
+            let paceText = Formatters.compactDecimal.string(from: NSNumber(value: pace)) ?? "0.5"
+            return "\(profile.goalType.title) · \(paceText) \(UnitSystem.metric.weightUnit)/week"
         }
+    }
+
+    var heroSupportingText: String {
+        guard isTargetMode else { return "" }
+
+        if let targetDate = profile?.targetDate {
+            return "by \(Formatters.date.string(from: targetDate))"
+        }
+        return ""
+    }
+
+    var targetModeWarning: String? {
+        guard effectiveGoal?.isAggressiveWarning == true else { return nil }
+        return "This target date implies more than 1.0 kg per week."
     }
 
     func entries(for timeframe: GraphTimeframe) -> [WeightEntryRecord] {

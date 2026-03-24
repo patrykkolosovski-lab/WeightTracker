@@ -11,7 +11,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         SectionTitle("Profile", subtitle: "Practical MVP settings only.")
                         SettingsRow(iconName: "person.crop.circle.fill", title: "Email", value: store.account?.email ?? "--")
-                        SettingsRow(iconName: "target", title: "Goal", value: store.profile?.goalType.title ?? "--", accent: BeFitTheme.success)
+                        SettingsRow(iconName: "target", title: store.goalCardTitle, value: store.goalSummaryDisplay, accent: BeFitTheme.success)
                     }
                 }
 

@@ -21,6 +21,9 @@ final class ProfileRecord {
     var targetWeightKilograms: Double
     var activityLevelRaw: String
     var goalTypeRaw: String
+    var goalModeRaw: String?
+    var weeklyPaceKilograms: Double?
+    var targetDate: Date?
     var formulaSexRaw: String
     var preferredUnitSystemRaw: String
 
@@ -30,6 +33,9 @@ final class ProfileRecord {
         targetWeightKilograms: Double,
         activityLevel: ActivityLevel,
         goalType: GoalType,
+        goalMode: GoalMode,
+        weeklyPaceKilograms: Double?,
+        targetDate: Date?,
         formulaSex: FormulaSex,
         preferredUnitSystem: UnitSystem
     ) {
@@ -38,6 +44,9 @@ final class ProfileRecord {
         self.targetWeightKilograms = targetWeightKilograms
         self.activityLevelRaw = activityLevel.rawValue
         self.goalTypeRaw = goalType.rawValue
+        self.goalModeRaw = goalMode.rawValue
+        self.weeklyPaceKilograms = weeklyPaceKilograms
+        self.targetDate = targetDate
         self.formulaSexRaw = formulaSex.rawValue
         self.preferredUnitSystemRaw = preferredUnitSystem.rawValue
     }
@@ -52,6 +61,11 @@ final class ProfileRecord {
         set { goalTypeRaw = newValue.rawValue }
     }
 
+    var goalMode: GoalMode {
+        get { GoalMode(rawValue: goalModeRaw ?? "") ?? .generic }
+        set { goalModeRaw = newValue.rawValue }
+    }
+
     var formulaSex: FormulaSex {
         get { FormulaSex(rawValue: formulaSexRaw) ?? .female }
         set { formulaSexRaw = newValue.rawValue }
@@ -60,6 +74,24 @@ final class ProfileRecord {
     var preferredUnitSystem: UnitSystem {
         get { UnitSystem(rawValue: preferredUnitSystemRaw) ?? .metric }
         set { preferredUnitSystemRaw = newValue.rawValue }
+    }
+
+    var resolvedWeeklyPaceKilograms: Double? {
+        if goalType == .maintenance {
+            return nil
+        }
+
+        return weeklyPaceKilograms ?? WeeklyPaceOption.half.kilogramsPerWeek
+    }
+
+    var goalConfiguration: GoalConfiguration {
+        GoalConfiguration(
+            mode: goalMode,
+            genericGoalType: goalType,
+            weeklyPaceKilograms: resolvedWeeklyPaceKilograms,
+            targetWeightKilograms: targetWeightKilograms,
+            targetDate: targetDate
+        )
     }
 }
 

@@ -91,7 +91,10 @@ struct LocalProfileRepository: ProfileRepository {
             heightCentimeters: input.heightCentimeters,
             targetWeightKilograms: input.targetWeightKilograms,
             activityLevel: input.activityLevel,
-            goalType: input.goalType,
+            goalType: input.genericGoalType,
+            goalMode: input.goalMode,
+            weeklyPaceKilograms: input.weeklyPaceKilograms,
+            targetDate: input.targetDate,
             formulaSex: input.formulaSex,
             preferredUnitSystem: input.unitSystem
         )
@@ -100,7 +103,10 @@ struct LocalProfileRepository: ProfileRepository {
         profile.heightCentimeters = input.heightCentimeters
         profile.targetWeightKilograms = input.targetWeightKilograms
         profile.activityLevel = input.activityLevel
-        profile.goalType = input.goalType
+        profile.goalType = input.genericGoalType
+        profile.goalMode = input.goalMode
+        profile.weeklyPaceKilograms = input.weeklyPaceKilograms
+        profile.targetDate = input.targetDate
         profile.formulaSex = input.formulaSex
         profile.preferredUnitSystem = input.unitSystem
 

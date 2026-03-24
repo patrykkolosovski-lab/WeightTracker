@@ -50,13 +50,24 @@ struct BodyMetricsView: View {
 
     private var previewCalories: String {
         guard let input = form.makeInput(),
+              let effectiveGoal = GoalLogic.effectiveGoal(
+                currentWeightKilograms: input.currentWeightKilograms,
+                configuration: GoalConfiguration(
+                    mode: input.goalMode,
+                    genericGoalType: input.genericGoalType,
+                    weeklyPaceKilograms: input.weeklyPaceKilograms,
+                    targetWeightKilograms: input.targetWeightKilograms,
+                    targetDate: input.targetDate
+                ),
+                referenceDate: .now
+              ),
               let calories = CalorieCalculator.dailyTarget(
                 age: input.age,
                 heightCentimeters: input.heightCentimeters,
                 weightKilograms: input.currentWeightKilograms,
                 activityLevel: input.activityLevel,
                 formulaSex: input.formulaSex,
-                goalType: input.goalType
+                effectiveGoal: effectiveGoal
               ) else {
             return "--"
         }
