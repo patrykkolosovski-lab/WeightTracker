@@ -193,6 +193,26 @@ final class AppStore: ObservableObject {
         return "\(Formatters.weightDisplay.string(from: NSNumber(value: displayValue)) ?? "--") \(unitSystem.weightUnit)"
     }
 
+    var weeklyAverageRows: [WeeklyAverageRow] {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: .now)
+        let entriesByDay = Dictionary(grouping: entries) { entry in
+            calendar.startOfDay(for: entry.date)
+        }
+
+        return (0..<7).map { offset in
+            let day = calendar.date(byAdding: .day, value: -offset, to: today) ?? today
+            let latestEntry = entriesByDay[day]?.max(by: { $0.date < $1.date })
+            let value = latestEntry.map {
+                UnitConverter.weightToDisplay($0.weightKilograms, unitSystem: unitSystem)
+            }.map {
+                "\(Formatters.weightDisplay.string(from: NSNumber(value: $0)) ?? "--") \(unitSystem.weightUnit)"
+            } ?? "--"
+
+            return WeeklyAverageRow(date: day, value: value)
+        }
+    }
+
     var dailyCaloriesDisplay: String {
         guard let profile, let currentWeightKilograms, let effectiveGoal else { return "--" }
 
@@ -257,6 +277,39 @@ final class AppStore: ObservableObject {
         }
     }
 
+    var goalButtonDisplay: String {
+        guard let profile else { return "--" }
+
+        if profile.goalMode == .target {
+            return targetWeightDisplay
+        }
+
+        switch profile.goalType {
+        case .loss:
+            return "Lose"
+        case .gain:
+            return "Gain"
+        case .maintenance:
+            return "Maintain"
+        }
+    }
+
+    var goalSheetPaceDisplay: String {
+        guard let profile else { return "--" }
+
+        switch profile.goalMode {
+        case .target:
+            guard let pace = effectiveGoal?.weeklyPaceKilograms else { return "--" }
+            let paceText = Formatters.compactDecimal.string(from: NSNumber(value: pace)) ?? "--"
+            return "\(paceText) \(UnitSystem.metric.weightUnit)/week"
+        case .generic:
+            guard profile.goalType != .maintenance else { return "Not set for maintenance" }
+            let pace = profile.resolvedWeeklyPaceKilograms ?? WeeklyPaceOption.half.kilogramsPerWeek
+            let paceText = Formatters.compactDecimal.string(from: NSNumber(value: pace)) ?? "0.5"
+            return "\(paceText) \(UnitSystem.metric.weightUnit)/week"
+        }
+    }
+
     var heroSupportingText: String {
         guard isTargetMode else { return "" }
 
@@ -264,6 +317,11 @@ final class AppStore: ObservableObject {
             return "by \(Formatters.date.string(from: targetDate))"
         }
         return ""
+    }
+
+    var targetDateDisplay: String {
+        guard let targetDate = profile?.targetDate else { return "--" }
+        return Formatters.date.string(from: targetDate)
     }
 
     var targetModeWarning: String? {
@@ -328,4 +386,11 @@ enum ValidationError: LocalizedError {
             return "Please enter a valid weight before saving."
         }
     }
+}
+
+struct WeeklyAverageRow: Identifiable {
+    let date: Date
+    let value: String
+
+    var id: Date { date }
 }

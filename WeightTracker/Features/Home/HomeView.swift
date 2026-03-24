@@ -3,6 +3,9 @@ import SwiftUI
 struct HomeView: View {
     @ObservedObject var store: AppStore
     @State private var isBMISheetPresented = false
+    @State private var isGoalSheetPresented = false
+    @State private var isWeeklyAverageSheetPresented = false
+    @State private var isCaloriesSheetPresented = false
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -32,12 +35,18 @@ struct HomeView: View {
                     statButtonCard(title: "BMI", value: store.bmiDisplay, accent: bmiAccent) {
                         isBMISheetPresented = true
                     }
-                    statCard(title: "Weekly Average", value: store.weeklyAverageDisplay)
+                    statButtonCard(title: "Weekly Average", value: store.weeklyAverageDisplay, accent: BeFitTheme.textPrimary) {
+                        isWeeklyAverageSheetPresented = true
+                    }
                 }
 
                 HStack(spacing: 14) {
-                    statCard(title: "Daily Calories", value: store.dailyCaloriesDisplay, accent: BeFitTheme.warning)
-                    statCard(title: store.goalCardTitle, value: store.goalSummaryDisplay, accent: BeFitTheme.success)
+                    statButtonCard(title: "Daily Calories", value: store.dailyCaloriesDisplay, accent: BeFitTheme.warning) {
+                        isCaloriesSheetPresented = true
+                    }
+                    statButtonCard(title: store.goalCardTitle, value: store.goalButtonDisplay, accent: BeFitTheme.success) {
+                        isGoalSheetPresented = true
+                    }
                 }
 
                 if let targetModeWarning = store.targetModeWarning {
@@ -53,6 +62,21 @@ struct HomeView: View {
         }
         .sheet(isPresented: $isBMISheetPresented) {
             BMIScaleView(bmiValue: store.bmiValue)
+        }
+        .sheet(isPresented: $isGoalSheetPresented) {
+            GoalDetailsView(
+                isTargetMode: store.isTargetMode,
+                goalTypeTitle: store.goalButtonDisplay,
+                targetWeight: store.targetWeightDisplay,
+                targetDateText: store.targetDateDisplay,
+                paceText: store.goalSheetPaceDisplay
+            )
+        }
+        .sheet(isPresented: $isWeeklyAverageSheetPresented) {
+            WeeklyAverageSheetView(rows: store.weeklyAverageRows)
+        }
+        .sheet(isPresented: $isCaloriesSheetPresented) {
+            CaloriesInfoView()
         }
     }
 

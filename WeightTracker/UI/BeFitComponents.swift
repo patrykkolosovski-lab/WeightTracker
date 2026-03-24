@@ -425,6 +425,109 @@ struct BMIScaleView: View {
     }
 }
 
+struct GoalDetailsView: View {
+    let isTargetMode: Bool
+    let goalTypeTitle: String
+    let targetWeight: String
+    let targetDateText: String
+    let paceText: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text(isTargetMode ? "Target Goal" : "Generic Goal")
+                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .foregroundStyle(BeFitTheme.textPrimary)
+
+            VStack(alignment: .leading, spacing: 10) {
+                if isTargetMode {
+                    goalDetailRow(label: "Target Weight", value: targetWeight)
+                    goalDetailRow(label: "End Date", value: targetDateText)
+                    goalDetailRow(label: "Pace", value: paceText)
+                } else {
+                    goalDetailRow(label: "Direction", value: goalTypeTitle)
+                    goalDetailRow(label: "Pace", value: paceText)
+                }
+            }
+        }
+        .padding(24)
+        .presentationDetents([.fraction(0.32)])
+        .presentationBackground(BeFitTheme.backgroundMiddle)
+    }
+
+    @ViewBuilder
+    private func goalDetailRow(label: String, value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundStyle(BeFitTheme.textSecondary)
+            Spacer()
+            Text(value)
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .foregroundStyle(BeFitTheme.textPrimary)
+        }
+    }
+}
+
+struct CaloriesInfoView: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Calories")
+                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .foregroundStyle(BeFitTheme.textPrimary)
+
+            Text("This is how much you need to eat to reach your goals!")
+                .font(.system(size: 15, weight: .medium, design: .rounded))
+                .foregroundStyle(BeFitTheme.textSecondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(24)
+        .presentationDetents([.fraction(0.22)])
+        .presentationBackground(BeFitTheme.backgroundMiddle)
+    }
+}
+
+struct WeeklyAverageSheetView: View {
+    let rows: [WeeklyAverageRow]
+
+    private let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE"
+        return formatter
+    }()
+
+    private let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        return formatter
+    }()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Past Week")
+                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .foregroundStyle(BeFitTheme.textPrimary)
+
+            VStack(spacing: 10) {
+                ForEach(rows) { row in
+                    HStack {
+                        Text("\(dayFormatter.string(from: row.date)), \(dateFormatter.string(from: row.date))")
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .foregroundStyle(BeFitTheme.textSecondary)
+                        Spacer()
+                        Text(row.value)
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                            .foregroundStyle(BeFitTheme.textPrimary)
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+        .padding(24)
+        .presentationDetents([.fraction(0.5)])
+        .presentationBackground(BeFitTheme.backgroundMiddle)
+    }
+}
+
 struct SettingsRow: View {
     let iconName: String
     let title: String
