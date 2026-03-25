@@ -2,6 +2,7 @@ import Combine
 import Foundation
 import SwiftData
 import SwiftUI
+import Supabase
 import UIKit
 import UserNotifications
 
@@ -15,98 +16,179 @@ final class AppStore: ObservableObject {
     @Published var reminderSetupMode: ReminderSetupMode = .firstPrompt
     @Published var reminderTimeSelection = ReminderPreferencesStore.defaultTimeDate()
     @Published var isNotificationSettingsAlertPresented = false
+    @Published var isAuthActionInFlight = false
 
-    @Published private(set) var account: AccountRecord?
+    @Published private(set) var accountEmail: String?
     @Published private(set) var profile: ProfileRecord?
     @Published private(set) var entries: [WeightEntryRecord] = []
     @Published private(set) var reminderAuthorizationStatus: ReminderAuthorizationStatus = .notDetermined
     @Published private(set) var isDailyReminderEnabled = false
 
-    private let sessionKey = "befit.active-session"
     private var isConfigured = false
+    private var authStateTask: Task<Void, Never>?
+    private var currentUserID: UUID?
+    private var pendingVerificationEmail: String?
+    private var isSyncInFlight = false
 
-    private var authRepository: AuthRepository?
-    private var profileRepository: ProfileRepository?
-    private var weightRepository: WeightEntryRepository?
+    private var localDataStore: LocalDataStore?
+    private let remoteService = SupabaseService.shared
     private let reminderPreferences = ReminderPreferencesStore()
     private var reminderService: ReminderNotificationService?
 
-    func configureIfNeeded(modelContext: ModelContext) {
+    func configureIfNeeded(modelContext: ModelContext) async {
         guard !isConfigured else { return }
 
-        authRepository = LocalAuthRepository(modelContext: modelContext)
-        profileRepository = LocalProfileRepository(modelContext: modelContext)
-        weightRepository = LocalWeightEntryRepository(modelContext: modelContext)
+        localDataStore = LocalDataStore(modelContext: modelContext)
         reminderService = LocalReminderNotificationService()
         isConfigured = true
 
+        authStateTask = Task { [weak self] in
+            guard let self else { return }
+            for await authChange in remoteService.authStateChanges {
+                await self.handleAuthStateChange(event: authChange.event, session: authChange.session)
+            }
+        }
+
         syncReminderPreferences()
-        refreshAll()
+        await restoreSessionIfPossible()
         refreshReminderState()
     }
 
-    func refreshAll() {
-        guard isConfigured else { return }
+    func refreshSessionState() async {
+        await restoreSessionIfPossible()
+    }
+
+    func restoreSessionIfPossible() async {
+        guard isConfigured, let localDataStore else { return }
+
+        if let storedSession = await remoteService.currentStoredSession() {
+            await applyAuthenticatedSession(storedSession)
+            return
+        }
+
+        if let pendingVerificationEmail {
+            destination = .emailVerification(pendingVerificationEmail)
+            return
+        }
+
+        clearAuthenticatedState(using: localDataStore)
+    }
+
+    func register(email: String, password: String) async throws {
+        isAuthActionInFlight = true
+        defer { isAuthActionInFlight = false }
+
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
 
         do {
-            account = try authRepository?.fetchAccount()
-            profile = try profileRepository?.fetchProfile()
-            entries = try weightRepository?.fetchEntries() ?? []
-            syncReminderPreferences()
-            updateDestination()
+            switch try await remoteService.signUp(email: trimmedEmail, password: password) {
+            case .signedIn(let session):
+                await applyAuthenticatedSession(session)
+            case .pendingVerification(let email):
+                pendingVerificationEmail = email
+                destination = .emailVerification(email)
+            }
         } catch {
-            destination = .auth(.register)
+            // Existing local users may already have been created remotely.
+            do {
+                _ = try await remoteService.signIn(email: trimmedEmail, password: password)
+                await refreshSessionState()
+            } catch {
+                if SupabaseService.isEmailNotConfirmedError(error) {
+                    pendingVerificationEmail = trimmedEmail
+                    destination = .emailVerification(trimmedEmail)
+                    return
+                }
+                throw error
+            }
         }
     }
 
-    func register(email: String, password: String) throws {
-        guard let authRepository else { return }
-        try authRepository.register(email: email, password: password)
-        setSessionActive(true)
-        refreshAll()
-        refreshReminderState()
+    func login(email: String, password: String) async throws {
+        isAuthActionInFlight = true
+        defer { isAuthActionInFlight = false }
+
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        do {
+            let session = try await remoteService.signIn(email: trimmedEmail, password: password)
+            await applyAuthenticatedSession(session)
+        } catch {
+            if SupabaseService.isEmailNotConfirmedError(error) {
+                pendingVerificationEmail = trimmedEmail
+                destination = .emailVerification(trimmedEmail)
+                return
+            }
+            throw error
+        }
     }
 
-    func login(email: String, password: String) throws {
-        guard let authRepository else { return }
-        try authRepository.login(email: email, password: password)
-        setSessionActive(true)
-        refreshAll()
-        refreshReminderState()
+    func submitSignupOTP(email: String, code: String) async throws {
+        isAuthActionInFlight = true
+        defer { isAuthActionInFlight = false }
+
+        let session = try await remoteService.verifySignupOTP(email: email, code: code)
+        pendingVerificationEmail = nil
+        await applyAuthenticatedSession(session)
+    }
+
+    func resendSignupOTP(email: String) async throws {
+        isAuthActionInFlight = true
+        defer { isAuthActionInFlight = false }
+
+        try await remoteService.resendSignupOTP(email: email)
+    }
+
+    func returnToLoginFromVerification() {
+        pendingVerificationEmail = nil
+        destination = .auth(.login)
     }
 
     func logout() {
-        setSessionActive(false)
-        refreshAll()
+        pendingVerificationEmail = nil
         Task {
+            try? await remoteService.signOut()
+            await clearAuthenticatedState()
             await reminderService?.removeAllReminders()
         }
     }
 
     func saveMetrics(form: MetricsFormState) throws {
-        guard let input = form.makeInput(),
-              let profileRepository,
-              let weightRepository else {
-            throw ValidationError.invalidMetrics
+        guard let userID = currentUserID,
+              let localDataStore,
+              let input = form.makeInput() else {
+            throw AppStateError.notAuthenticated
         }
 
-        _ = try profileRepository.saveProfile(input: input)
-        try weightRepository.upsertLatestWeight(
+        let userIDString = userID.uuidString
+
+        let savedProfile = try localDataStore.saveProfile(
+            input: input,
+            userIDString: userIDString,
+            needsSync: true
+        )
+        try localDataStore.upsertLatestWeight(
             WeightEntryDraft(
                 date: .now,
                 weightKilograms: input.currentWeightKilograms,
                 notes: "",
                 source: .metricsAdjustment
-            )
+            ),
+            userIDString: userIDString,
+            needsSync: true
         )
 
-        setSessionActive(true)
-        refreshAll()
+        profile = savedProfile
+        entries = (try? localDataStore.fetchEntries(userIDString: userIDString)) ?? entries
+        selectedTab = .home
+        destination = .main
         refreshReminderState()
+        Task { await self.syncAfterLocalMutation() }
     }
 
     func updatePreferredUnitSystem(_ unitSystem: UnitSystem) {
-        guard let profileRepository,
+        guard let currentUserID,
+              let localDataStore,
               let currentProfile = profile,
               let latestWeightKilograms = currentWeightKilograms else { return }
 
@@ -125,10 +207,15 @@ final class AppStore: ObservableObject {
         )
 
         do {
-            _ = try profileRepository.saveProfile(input: input)
-            refreshAll()
+            _ = try localDataStore.saveProfile(
+                input: input,
+                userIDString: currentUserID.uuidString,
+                needsSync: true
+            )
+            loadLocalCache(for: currentUserID.uuidString)
+            Task { await self.syncAfterLocalMutation() }
         } catch {
-            refreshAll()
+            loadLocalCache(for: currentUserID.uuidString)
         }
     }
 
@@ -143,26 +230,40 @@ final class AppStore: ObservableObject {
     }
 
     func saveWeightEntry(form: WeightEntryFormState) throws {
+        guard let currentUserID,
+              let localDataStore else {
+            throw AppStateError.notAuthenticated
+        }
+
         let today = Calendar.current.startOfDay(for: .now)
         let selectedDay = Calendar.current.startOfDay(for: form.date)
         guard selectedDay <= today else {
             throw ValidationError.futureWeightEntryDate
         }
 
-        guard let draft = form.makeDraft(source: activeWeightEntryID == nil ? .manual : .metricsAdjustment),
-              let weightRepository else {
+        guard let draft = form.makeDraft(source: activeWeightEntryID == nil ? .manual : .metricsAdjustment) else {
             throw ValidationError.invalidWeightEntry
         }
 
         if let activeWeightEntryID {
-            try weightRepository.updateEntry(id: activeWeightEntryID, with: draft)
+            try localDataStore.updateEntry(
+                id: activeWeightEntryID,
+                userIDString: currentUserID.uuidString,
+                with: draft,
+                needsSync: true
+            )
         } else {
-            try weightRepository.addEntry(draft)
+            _ = try localDataStore.addEntry(
+                draft,
+                userIDString: currentUserID.uuidString,
+                needsSync: true
+            )
         }
 
         dismissWeightEntrySheet()
-        refreshAll()
+        loadLocalCache(for: currentUserID.uuidString)
         refreshReminderState()
+        Task { await self.syncAfterLocalMutation() }
     }
 
     func handleHomeAppeared() {
@@ -182,6 +283,7 @@ final class AppStore: ObservableObject {
 
     func handleScenePhaseChange(_ scenePhase: ScenePhase) {
         guard scenePhase == .active else { return }
+        Task { await refreshSessionState() }
         refreshReminderState()
     }
 
@@ -258,8 +360,24 @@ final class AppStore: ObservableObject {
         return entries.first(where: { $0.id == activeWeightEntryID })
     }
 
+    var defaultAuthEmail: String {
+        accountEmail ?? legacyCredentials?.email ?? ""
+    }
+
+    var defaultAuthPassword: String {
+        legacyCredentials?.password ?? ""
+    }
+
+    var hasLegacyCredentials: Bool {
+        legacyCredentials != nil
+    }
+
     var hasAccount: Bool {
-        account != nil
+        accountEmail != nil
+    }
+
+    var accountEmailDisplay: String {
+        accountEmail ?? legacyCredentials?.email ?? "--"
     }
 
     var unitSystem: UnitSystem {
@@ -488,31 +606,74 @@ final class AppStore: ObservableObject {
         return .new(latestWeightKilograms: currentWeightKilograms, unitSystem: unitSystem)
     }
 
-    private func updateDestination() {
-        guard hasAccount else {
+    private var legacyCredentials: LegacyCredentials? {
+        try? localDataStore?.legacyCredentials()
+    }
+
+    private func handleAuthStateChange(event: AuthChangeEvent, session: Session?) async {
+        switch event {
+        case .signedOut, .userDeleted:
+            await clearAuthenticatedState()
+        case .initialSession, .signedIn, .tokenRefreshed, .userUpdated, .mfaChallengeVerified:
+            guard let session else { return }
+            await applyAuthenticatedSession(session)
+        case .passwordRecovery:
+            break
+        }
+    }
+
+    private func applyAuthenticatedSession(_ session: Session) async {
+        guard isConfigured, currentUserID != session.user.id || !isSyncInFlight else { return }
+
+        currentUserID = session.user.id
+        accountEmail = session.user.email
+        pendingVerificationEmail = nil
+
+        do {
+            try await importLegacyDataIfNeeded(session: session)
+            try await synchronizeCurrentUser()
+        } catch {
+            loadLocalCache(for: session.user.id.uuidString)
+        }
+
+        updateDestinationForAuthenticatedState()
+        refreshReminderState()
+    }
+
+    private func clearAuthenticatedState(using localDataStore: LocalDataStore? = nil) {
+        currentUserID = nil
+        accountEmail = nil
+        profile = nil
+        entries = []
+        isSyncInFlight = false
+        syncReminderPreferences()
+
+        if let pendingVerificationEmail {
+            destination = .emailVerification(pendingVerificationEmail)
+            return
+        }
+
+        let store = localDataStore ?? self.localDataStore
+
+        do {
+            if let credentials = try store?.legacyCredentials(),
+               !credentials.email.isEmpty {
+                destination = .auth(.register)
+            } else {
+                destination = .auth(.register)
+            }
+        } catch {
             destination = .auth(.register)
-            return
         }
-
-        guard isSessionActive else {
-            destination = .auth(.login)
-            return
-        }
-
-        guard profile != nil else {
-            destination = .metricsOnboarding
-            return
-        }
-
-        destination = .main
     }
 
-    private var isSessionActive: Bool {
-        UserDefaults.standard.bool(forKey: sessionKey)
-    }
+    private func updateDestinationForAuthenticatedState() {
+        if let pendingVerificationEmail {
+            destination = .emailVerification(pendingVerificationEmail)
+            return
+        }
 
-    private func setSessionActive(_ isActive: Bool) {
-        UserDefaults.standard.set(isActive, forKey: sessionKey)
+        destination = profile == nil ? .metricsOnboarding : .main
     }
 
     private var isInMainDestination: Bool {
@@ -520,6 +681,89 @@ final class AppStore: ObservableObject {
             return true
         }
         return false
+    }
+
+    private func loadLocalCache(for userIDString: String) {
+        guard let localDataStore else { return }
+
+        do {
+            profile = try localDataStore.fetchProfile(userIDString: userIDString)
+            entries = try localDataStore.fetchEntries(userIDString: userIDString)
+        } catch {
+            profile = nil
+            entries = []
+        }
+    }
+
+    private func importLegacyDataIfNeeded(session: Session) async throws {
+        guard let localDataStore,
+              let sessionEmail = session.user.email else {
+            return
+        }
+
+        let snapshot = try localDataStore.legacyDataSnapshot()
+        guard snapshot.hasData else { return }
+
+        if let credentials = snapshot.credentials,
+           credentials.email.caseInsensitiveCompare(sessionEmail) != .orderedSame {
+            return
+        }
+
+        if let legacyProfile = snapshot.profile {
+            _ = try await remoteService.saveProfile(RemoteProfileWrite(record: legacyProfile, userID: session.user.id))
+        }
+
+        for legacyEntry in snapshot.entries {
+            _ = try await remoteService.saveWeightEntry(RemoteWeightEntryWrite(record: legacyEntry, userID: session.user.id))
+        }
+
+        try localDataStore.migrateLegacyCache(to: session.user.id.uuidString)
+        try localDataStore.clearLegacyAccount()
+    }
+
+    private func synchronizeCurrentUser() async throws {
+        guard let currentUserID,
+              let localDataStore else { return }
+
+        isSyncInFlight = true
+        defer { isSyncInFlight = false }
+
+        let userIDString = currentUserID.uuidString
+
+        if let pendingProfile = try localDataStore.pendingProfile(userIDString: userIDString) {
+            let savedProfile = try await remoteService.saveProfile(
+                RemoteProfileWrite(record: pendingProfile, userID: currentUserID)
+            )
+            _ = try localDataStore.saveRemoteProfile(savedProfile)
+        }
+
+        for pendingEntry in try localDataStore.pendingEntries(userIDString: userIDString) {
+            let savedEntry = try await remoteService.saveWeightEntry(
+                RemoteWeightEntryWrite(record: pendingEntry, userID: currentUserID)
+            )
+            try localDataStore.saveRemoteEntry(savedEntry, userIDString: userIDString)
+        }
+
+        if let remoteProfile = try await remoteService.fetchProfile(userID: currentUserID) {
+            _ = try localDataStore.saveRemoteProfile(remoteProfile)
+        }
+
+        if let finalProfile = try await remoteService.fetchProfile(userID: currentUserID) {
+            _ = try localDataStore.saveRemoteProfile(finalProfile)
+        }
+        let finalEntries = try await remoteService.fetchWeightEntries(userID: currentUserID)
+        try localDataStore.saveRemoteEntries(finalEntries, userIDString: userIDString)
+        loadLocalCache(for: userIDString)
+    }
+
+    private func syncAfterLocalMutation() async {
+        do {
+            try await synchronizeCurrentUser()
+        } catch {
+            if let currentUserID {
+                loadLocalCache(for: currentUserID.uuidString)
+            }
+        }
     }
 
     private func syncReminderPreferences() {
@@ -576,6 +820,17 @@ final class AppStore: ObservableObject {
         )
 
         await reminderService.replaceReminders(dates: reminderDates)
+    }
+}
+
+enum AppStateError: LocalizedError {
+    case notAuthenticated
+
+    var errorDescription: String? {
+        switch self {
+        case .notAuthenticated:
+            return "Please sign in again to continue."
+        }
     }
 }
 

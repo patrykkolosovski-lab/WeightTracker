@@ -16,6 +16,8 @@ struct AppRootView: View {
                     .tint(BeFitTheme.textPrimary)
             case .auth(let mode):
                 AuthenticationView(store: store, mode: mode)
+            case .emailVerification(let email):
+                EmailVerificationView(store: store, email: email)
             case .metricsOnboarding:
                 MetricsOnboardingView(store: store)
             case .main:
@@ -23,7 +25,7 @@ struct AppRootView: View {
             }
         }
         .task {
-            store.configureIfNeeded(modelContext: modelContext)
+            await store.configureIfNeeded(modelContext: modelContext)
         }
         .onChange(of: scenePhase) { _, newValue in
             store.handleScenePhaseChange(newValue)

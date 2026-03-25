@@ -16,6 +16,7 @@ final class AccountRecord {
 
 @Model
 final class ProfileRecord {
+    var userIDString: String?
     var age: Int
     var heightCentimeters: Double
     var targetWeightKilograms: Double
@@ -26,8 +27,12 @@ final class ProfileRecord {
     var targetDate: Date?
     var formulaSexRaw: String
     var preferredUnitSystemRaw: String
+    var createdAt: Date
+    var updatedAt: Date
+    var needsSync: Bool
 
     init(
+        userIDString: String? = nil,
         age: Int,
         heightCentimeters: Double,
         targetWeightKilograms: Double,
@@ -37,8 +42,12 @@ final class ProfileRecord {
         weeklyPaceKilograms: Double?,
         targetDate: Date?,
         formulaSex: FormulaSex,
-        preferredUnitSystem: UnitSystem
+        preferredUnitSystem: UnitSystem,
+        createdAt: Date = .now,
+        updatedAt: Date = .now,
+        needsSync: Bool = false
     ) {
+        self.userIDString = userIDString
         self.age = age
         self.heightCentimeters = heightCentimeters
         self.targetWeightKilograms = targetWeightKilograms
@@ -49,6 +58,9 @@ final class ProfileRecord {
         self.targetDate = targetDate
         self.formulaSexRaw = formulaSex.rawValue
         self.preferredUnitSystemRaw = preferredUnitSystem.rawValue
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.needsSync = needsSync
     }
 
     var activityLevel: ActivityLevel {
@@ -98,23 +110,35 @@ final class ProfileRecord {
 @Model
 final class WeightEntryRecord {
     @Attribute(.unique) var id: UUID
+    var userIDString: String?
     var date: Date
     var weightKilograms: Double
     var notes: String
     var sourceRaw: String
+    var createdAt: Date
+    var updatedAt: Date
+    var needsSync: Bool
 
     init(
         id: UUID = UUID(),
+        userIDString: String? = nil,
         date: Date,
         weightKilograms: Double,
         notes: String = "",
-        source: WeightEntrySource
+        source: WeightEntrySource,
+        createdAt: Date = .now,
+        updatedAt: Date = .now,
+        needsSync: Bool = false
     ) {
         self.id = id
+        self.userIDString = userIDString
         self.date = date
         self.weightKilograms = weightKilograms
         self.notes = notes
         self.sourceRaw = source.rawValue
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.needsSync = needsSync
     }
 
     var source: WeightEntrySource {

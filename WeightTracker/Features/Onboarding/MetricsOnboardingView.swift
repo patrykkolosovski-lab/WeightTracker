@@ -37,6 +37,8 @@ struct MetricsOnboardingView: View {
     }
 
     private func save() {
+        errorMessage = nil
+
         do {
             try store.saveMetrics(form: form)
         } catch {

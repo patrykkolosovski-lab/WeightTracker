@@ -8,6 +8,7 @@ enum AuthScreenMode {
 enum RootDestination {
     case loading
     case auth(AuthScreenMode)
+    case emailVerification(String)
     case metricsOnboarding
     case main
 }
@@ -174,7 +175,7 @@ enum FormulaSex: String, CaseIterable, Identifiable {
     }
 }
 
-enum WeightEntrySource: String {
+enum WeightEntrySource: String, Codable {
     case onboarding
     case manual
     case metricsAdjustment

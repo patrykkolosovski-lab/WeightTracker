@@ -9,7 +9,7 @@ struct SettingsView: View {
                 BeFitCard {
                     VStack(alignment: .leading, spacing: 16) {
                         SectionTitle("Profile", subtitle: "Practical MVP settings only.")
-                        SettingsRow(iconName: "person.crop.circle.fill", title: "Email", value: store.account?.email ?? "--")
+                        SettingsRow(iconName: "person.crop.circle.fill", title: "Email", value: store.accountEmailDisplay)
                     }
                 }
 

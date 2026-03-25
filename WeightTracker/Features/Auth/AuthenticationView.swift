@@ -29,7 +29,7 @@ struct AuthenticationView: View {
                         .font(.system(size: 30, weight: .bold, design: .rounded))
                         .foregroundStyle(BeFitTheme.textPrimary)
 
-                    Text(mode == .register ? "Register once, then complete your body metrics to unlock BeFit." : "Sign in to continue tracking your progress.")
+                    Text(supportingText)
                         .font(.system(size: 15, weight: .medium, design: .rounded))
                         .foregroundStyle(BeFitTheme.textSecondary)
                         .multilineTextAlignment(.center)
@@ -52,7 +52,9 @@ struct AuthenticationView: View {
                         }
 
                         PrimaryButton(title: mode == .register ? "Register" : "Sign In") {
-                            submit()
+                            Task {
+                                await submit()
+                            }
                         }
                     }
                 }
@@ -60,9 +62,32 @@ struct AuthenticationView: View {
             .padding(.horizontal, 22)
             .padding(.bottom, 28)
         }
+        .onAppear {
+            if email.isEmpty {
+                email = store.defaultAuthEmail
+            }
+            if password.isEmpty, store.hasLegacyCredentials {
+                password = store.defaultAuthPassword
+                if mode == .register {
+                    confirmPassword = store.defaultAuthPassword
+                }
+            }
+        }
     }
 
-    private func submit() {
+    private var supportingText: String {
+        if store.hasLegacyCredentials {
+            return mode == .register
+                ? "We found local BeFit data on this device. Register or sign in with the same email to migrate it safely to Supabase."
+                : "Sign in with your BeFit email to restore and sync your local progress."
+        }
+
+        return mode == .register
+            ? "Register once, enter the email code Supabase sends you, then complete your body metrics to unlock BeFit."
+            : "Sign in to continue tracking your progress."
+    }
+
+    private func submit() async {
         errorMessage = nil
 
         guard !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -83,9 +108,9 @@ struct AuthenticationView: View {
         do {
             switch mode {
             case .register:
-                try store.register(email: email, password: password)
+                try await store.register(email: email, password: password)
             case .login:
-                try store.login(email: email, password: password)
+                try await store.login(email: email, password: password)
             }
         } catch {
             errorMessage = error.localizedDescription
