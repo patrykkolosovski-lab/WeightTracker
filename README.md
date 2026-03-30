@@ -11,8 +11,6 @@ BeFit is designed to make daily weight tracking simple, private, and consistent.
 The app focuses on a fast local-first workflow, clear progress feedback, and
 optional iCloud sync without turning setup into friction.
 
-![BeFit home dashboard](docs/screenshots/home-dashboard.png)
-
 ### Screens
 
 <table>
