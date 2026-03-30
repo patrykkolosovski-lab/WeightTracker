@@ -1,14 +1,7 @@
 import Foundation
 
-enum AuthScreenMode {
-    case register
-    case login
-}
-
 enum RootDestination {
     case loading
-    case auth(AuthScreenMode)
-    case emailVerification(String)
     case metricsOnboarding
     case main
 }

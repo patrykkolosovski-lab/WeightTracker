@@ -1,12 +1,17 @@
 import Combine
 import Foundation
+import OSLog
+import StoreKit
 import SwiftData
 import SwiftUI
-import Supabase
 import UIKit
-import UserNotifications
 
 @MainActor
+/// Root application state for BeFit.
+///
+/// `AppStore` coordinates startup, local persistence, background iCloud sync,
+/// reminders, and Premium state while exposing a single observable surface to
+/// SwiftUI views.
 final class AppStore: ObservableObject {
     @Published var destination: RootDestination = .loading
     @Published var selectedTab: AppTab = .home
@@ -16,25 +21,45 @@ final class AppStore: ObservableObject {
     @Published var reminderSetupMode: ReminderSetupMode = .firstPrompt
     @Published var reminderTimeSelection = ReminderPreferencesStore.defaultTimeDate()
     @Published var isNotificationSettingsAlertPresented = false
-    @Published var isAuthActionInFlight = false
+    @Published var isICloudInfoPresented = false
 
-    @Published private(set) var accountEmail: String?
     @Published private(set) var profile: ProfileRecord?
     @Published private(set) var entries: [WeightEntryRecord] = []
     @Published private(set) var reminderAuthorizationStatus: ReminderAuthorizationStatus = .notDetermined
     @Published private(set) var isDailyReminderEnabled = false
+    @Published private(set) var lastSyncErrorMessage: String?
+    @Published private(set) var iCloudAvailability: ICloudAccountAvailability = .couldNotDetermine(nil)
+    @Published private(set) var iCloudSyncState: ICloudSyncState = .checkingAccount
+    @Published private(set) var lastSuccessfulSyncDate: Date?
+    @Published private(set) var isPremiumUnlocked = false
+    @Published private(set) var premiumDisplayPrice: String?
+    @Published private(set) var isPremiumPurchaseInFlight = false
+    @Published private(set) var premiumErrorMessage: String?
+    @Published var isPremiumManagementConfirmationPresented = false
 
     private var isConfigured = false
-    private var authStateTask: Task<Void, Never>?
-    private var currentUserID: UUID?
-    private var pendingVerificationEmail: String?
+    private var premiumUpdatesTask: Task<Void, Never>?
+    private var activeLocalUserIDString: String?
     private var isSyncInFlight = false
+    private var hasResolvedInitialDestination = false
 
     private var localDataStore: LocalDataStore?
-    private let remoteService = SupabaseService.shared
-    private let reminderPreferences = ReminderPreferencesStore()
+    private let bootstrapCoordinator = BootstrapCoordinator()
+    private let iCloudSyncService = ICloudSyncService.shared
+    private let iCloudInfoPreferences = ICloudInfoPromptStore()
+    private let metricsCoordinator = MetricsCoordinator()
+    private let weightEntryCoordinator = WeightEntryCoordinator()
+    private let reminderCoordinator = ReminderCoordinator()
+    private let premiumCoordinator = PremiumCoordinator()
     private var reminderService: ReminderNotificationService?
+    private let logger = Logger(subsystem: "WeightTracker", category: "AppStore")
 
+    deinit {
+        premiumUpdatesTask?.cancel()
+    }
+
+    /// Performs one-time store setup for the current process and restores the
+    /// latest local dataset before any UI route is finalized.
     func configureIfNeeded(modelContext: ModelContext) async {
         guard !isConfigured else { return }
 
@@ -42,180 +67,105 @@ final class AppStore: ObservableObject {
         reminderService = LocalReminderNotificationService()
         isConfigured = true
 
-        authStateTask = Task { [weak self] in
-            guard let self else { return }
-            for await authChange in remoteService.authStateChanges {
-                await self.handleAuthStateChange(event: authChange.event, session: authChange.session)
-            }
-        }
-
-        syncReminderPreferences()
+        applyReminderPreferenceSnapshot()
+        restoreCachedPremiumState()
+        startPremiumObservationIfNeeded()
+        lastSuccessfulSyncDate = await iCloudSyncService.cachedLastSuccessfulSyncDate()
         await restoreSessionIfPossible()
+        await refreshPremiumSubscriptionState()
         refreshReminderState()
+        presentICloudInfoIfNeeded()
     }
 
     func refreshSessionState() async {
         await restoreSessionIfPossible()
     }
 
+    /// Resolves the app launch route from local data first, then refreshes
+    /// iCloud availability and sync state in the background.
     func restoreSessionIfPossible() async {
         guard isConfigured, let localDataStore else { return }
 
-        if let storedSession = await remoteService.currentStoredSession() {
-            await applyAuthenticatedSession(storedSession)
-            return
+        if !hasResolvedInitialDestination {
+            destination = .loading
         }
-
-        if let pendingVerificationEmail {
-            destination = .emailVerification(pendingVerificationEmail)
-            return
-        }
-
-        clearAuthenticatedState(using: localDataStore)
-    }
-
-    func register(email: String, password: String) async throws {
-        isAuthActionInFlight = true
-        defer { isAuthActionInFlight = false }
-
-        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
 
         do {
-            switch try await remoteService.signUp(email: trimmedEmail, password: password) {
-            case .signedIn(let session):
-                await applyAuthenticatedSession(session)
-            case .pendingVerification(let email):
-                pendingVerificationEmail = email
-                destination = .emailVerification(email)
-            }
+            try prepareLocalDataForICloud(using: localDataStore)
         } catch {
-            // Existing local users may already have been created remotely.
-            do {
-                _ = try await remoteService.signIn(email: trimmedEmail, password: password)
-                await refreshSessionState()
-            } catch {
-                if SupabaseService.isEmailNotConfirmedError(error) {
-                    pendingVerificationEmail = trimmedEmail
-                    destination = .emailVerification(trimmedEmail)
-                    return
-                }
-                throw error
-            }
+            lastSyncErrorMessage = error.localizedDescription
+            logger.error("Failed to prepare local iCloud dataset: \(error.localizedDescription, privacy: .public)")
         }
-    }
 
-    func login(email: String, password: String) async throws {
-        isAuthActionInFlight = true
-        defer { isAuthActionInFlight = false }
-
-        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        do {
-            let session = try await remoteService.signIn(email: trimmedEmail, password: password)
-            await applyAuthenticatedSession(session)
-        } catch {
-            if SupabaseService.isEmailNotConfirmedError(error) {
-                pendingVerificationEmail = trimmedEmail
-                destination = .emailVerification(trimmedEmail)
-                return
-            }
-            throw error
+        if hasRestorableMainContentForActiveAccount {
+            destination = .main
         }
+
+        await refreshICloudStateAndSynchronize(
+            presentLoadingState: !hasResolvedInitialDestination && !hasRestorableMainContentForActiveAccount
+        )
+
+        if destination == .loading {
+            updateDestinationForAvailableLocalState()
+        }
+
+        hasResolvedInitialDestination = true
     }
 
-    func submitSignupOTP(email: String, code: String) async throws {
-        isAuthActionInFlight = true
-        defer { isAuthActionInFlight = false }
-
-        let session = try await remoteService.verifySignupOTP(email: email, code: code)
-        pendingVerificationEmail = nil
-        await applyAuthenticatedSession(session)
-    }
-
-    func resendSignupOTP(email: String) async throws {
-        isAuthActionInFlight = true
-        defer { isAuthActionInFlight = false }
-
-        try await remoteService.resendSignupOTP(email: email)
-    }
-
-    func returnToLoginFromVerification() {
-        pendingVerificationEmail = nil
-        destination = .auth(.login)
-    }
-
-    func logout() {
-        pendingVerificationEmail = nil
+    func retryICloudSync() {
         Task {
-            try? await remoteService.signOut()
-            await clearAuthenticatedState()
-            await reminderService?.removeAllReminders()
+            await refreshICloudStateAndSynchronize(presentLoadingState: false, forceSync: true)
         }
     }
 
+    func dismissICloudInfo() {
+        iCloudInfoPreferences.setHasShownPrompt(true)
+        isICloudInfoPresented = false
+    }
+
+    /// Saves profile metrics locally, upserts today's weight entry, and then
+    /// triggers a background cloud sync.
     func saveMetrics(form: MetricsFormState) throws {
-        guard let userID = currentUserID,
-              let localDataStore,
-              let input = form.makeInput() else {
-            throw AppStateError.notAuthenticated
+        guard let userIDString = activeLocalUserIDString,
+              let localDataStore else {
+            throw AppStateError.missingLocalAccountState
         }
 
-        let userIDString = userID.uuidString
-
-        let savedProfile = try localDataStore.saveProfile(
-            input: input,
+        let saveResult = try metricsCoordinator.saveMetrics(
+            form: form,
             userIDString: userIDString,
-            needsSync: true
-        )
-        try localDataStore.upsertLatestWeight(
-            WeightEntryDraft(
-                date: .now,
-                weightKilograms: input.currentWeightKilograms,
-                notes: "",
-                source: .metricsAdjustment
-            ),
-            userIDString: userIDString,
-            needsSync: true
+            existingEntries: entries,
+            localDataStore: localDataStore
         )
 
-        profile = savedProfile
-        entries = (try? localDataStore.fetchEntries(userIDString: userIDString)) ?? entries
+        profile = saveResult.profile
+        upsertInMemoryEntry(saveResult.weightEntry, userIDString: userIDString)
         selectedTab = .home
         destination = .main
+        lastSyncErrorMessage = nil
+        logger.debug("Saved metrics locally for user \(userIDString, privacy: .public)")
         refreshReminderState()
         Task { await self.syncAfterLocalMutation() }
     }
 
     func updatePreferredUnitSystem(_ unitSystem: UnitSystem) {
-        guard let currentUserID,
+        guard let activeLocalUserIDString,
               let localDataStore,
               let currentProfile = profile,
               let latestWeightKilograms = currentWeightKilograms else { return }
 
-        let input = MetricsInput(
-            age: currentProfile.age,
-            heightCentimeters: currentProfile.heightCentimeters,
-            currentWeightKilograms: latestWeightKilograms,
-            targetWeightKilograms: currentProfile.targetWeightKilograms,
-            activityLevel: currentProfile.activityLevel,
-            goalMode: currentProfile.goalMode,
-            genericGoalType: currentProfile.goalType,
-            weeklyPaceKilograms: currentProfile.resolvedWeeklyPaceKilograms,
-            targetDate: currentProfile.targetDate,
-            formulaSex: currentProfile.formulaSex,
-            unitSystem: unitSystem
-        )
-
         do {
-            _ = try localDataStore.saveProfile(
-                input: input,
-                userIDString: currentUserID.uuidString,
-                needsSync: true
+            try metricsCoordinator.updatePreferredUnitSystem(
+                unitSystem,
+                userIDString: activeLocalUserIDString,
+                currentProfile: currentProfile,
+                latestWeightKilograms: latestWeightKilograms,
+                localDataStore: localDataStore
             )
-            loadLocalCache(for: currentUserID.uuidString)
+            loadLocalCache(for: activeLocalUserIDString)
             Task { await self.syncAfterLocalMutation() }
         } catch {
-            loadLocalCache(for: currentUserID.uuidString)
+            loadLocalCache(for: activeLocalUserIDString)
         }
     }
 
@@ -229,51 +179,38 @@ final class AppStore: ObservableObject {
         isWeightEntrySheetPresented = false
     }
 
+    /// Saves a manual weight entry while enforcing the one-entry-per-day rule.
     func saveWeightEntry(form: WeightEntryFormState) throws {
-        guard let currentUserID,
+        guard let activeLocalUserIDString,
               let localDataStore else {
-            throw AppStateError.notAuthenticated
+            throw AppStateError.missingLocalAccountState
         }
 
-        let today = Calendar.current.startOfDay(for: .now)
-        let selectedDay = Calendar.current.startOfDay(for: form.date)
-        guard selectedDay <= today else {
-            throw ValidationError.futureWeightEntryDate
-        }
-
-        guard let draft = form.makeDraft(source: activeWeightEntryID == nil ? .manual : .metricsAdjustment) else {
-            throw ValidationError.invalidWeightEntry
-        }
-
-        if let activeWeightEntryID {
-            try localDataStore.updateEntry(
-                id: activeWeightEntryID,
-                userIDString: currentUserID.uuidString,
-                with: draft,
-                needsSync: true
-            )
-        } else {
-            _ = try localDataStore.addEntry(
-                draft,
-                userIDString: currentUserID.uuidString,
-                needsSync: true
-            )
-        }
+        let savedEntry = try weightEntryCoordinator.saveWeightEntry(
+            form: form,
+            activeWeightEntryID: activeWeightEntryID,
+            userIDString: activeLocalUserIDString,
+            localDataStore: localDataStore
+        )
 
         dismissWeightEntrySheet()
-        loadLocalCache(for: currentUserID.uuidString)
+        if let savedEntry {
+            upsertInMemoryEntry(savedEntry, userIDString: activeLocalUserIDString)
+        } else {
+            loadLocalCache(for: activeLocalUserIDString)
+        }
         refreshReminderState()
         Task { await self.syncAfterLocalMutation() }
     }
 
     func handleHomeAppeared() {
         guard isInMainDestination else { return }
-        syncReminderPreferences()
+        applyReminderPreferenceSnapshot()
 
         if reminderAuthorizationStatus == .notDetermined,
-           !reminderPreferences.hasHandledInitialPrompt() {
+           !reminderCoordinator.hasHandledInitialPrompt() {
             reminderSetupMode = .firstPrompt
-            reminderTimeSelection = reminderPreferences.reminderTimeDate()
+            reminderTimeSelection = reminderCoordinator.reminderTimeDate()
             isReminderSetupPresented = true
             return
         }
@@ -283,16 +220,19 @@ final class AppStore: ObservableObject {
 
     func handleScenePhaseChange(_ scenePhase: ScenePhase) {
         guard scenePhase == .active else { return }
-        Task { await refreshSessionState() }
+        Task {
+            await refreshSessionState()
+            await refreshPremiumSubscriptionState()
+        }
         refreshReminderState()
     }
 
     func setDailyReminderEnabled(_ isEnabled: Bool) {
-        syncReminderPreferences()
+        applyReminderPreferenceSnapshot()
 
         if !isEnabled {
-            reminderPreferences.setReminderEnabled(false)
-            syncReminderPreferences()
+            reminderCoordinator.setReminderEnabled(false)
+            applyReminderPreferenceSnapshot()
             Task {
                 await reminderService?.removeAllReminders()
             }
@@ -301,12 +241,12 @@ final class AppStore: ObservableObject {
 
         switch reminderAuthorizationStatus {
         case .authorized:
-            reminderPreferences.setReminderEnabled(true)
-            syncReminderPreferences()
+            reminderCoordinator.setReminderEnabled(true)
+            applyReminderPreferenceSnapshot()
             refreshReminderState()
         case .notDetermined:
             reminderSetupMode = .firstPrompt
-            reminderTimeSelection = reminderPreferences.reminderTimeDate()
+            reminderTimeSelection = reminderCoordinator.reminderTimeDate()
             isReminderSetupPresented = true
         case .denied:
             isNotificationSettingsAlertPresented = true
@@ -315,37 +255,37 @@ final class AppStore: ObservableObject {
 
     func presentReminderTimeEditor() {
         reminderSetupMode = .editTime
-        reminderTimeSelection = reminderPreferences.reminderTimeDate()
+        reminderTimeSelection = reminderCoordinator.reminderTimeDate()
         isReminderSetupPresented = true
     }
 
     func dismissReminderSetup() {
         if reminderSetupMode == .firstPrompt {
-            reminderPreferences.setReminderTime(reminderTimeSelection)
-            reminderPreferences.setHasHandledInitialPrompt(true)
-            syncReminderPreferences()
+            reminderCoordinator.setReminderTime(reminderTimeSelection)
+            reminderCoordinator.setHasHandledInitialPrompt(true)
+            applyReminderPreferenceSnapshot()
         }
 
         isReminderSetupPresented = false
     }
 
     func confirmReminderSetup() async {
-        reminderPreferences.setReminderTime(reminderTimeSelection)
+        reminderCoordinator.setReminderTime(reminderTimeSelection)
 
         switch reminderSetupMode {
         case .firstPrompt:
-            reminderPreferences.setHasHandledInitialPrompt(true)
+            reminderCoordinator.setHasHandledInitialPrompt(true)
             let status = await requestReminderAuthorizationIfNeeded()
             if status == .authorized {
-                reminderPreferences.setReminderEnabled(true)
+                reminderCoordinator.setReminderEnabled(true)
             } else {
-                reminderPreferences.setReminderEnabled(false)
+                reminderCoordinator.setReminderEnabled(false)
             }
         case .editTime:
             break
         }
 
-        syncReminderPreferences()
+        applyReminderPreferenceSnapshot()
         isReminderSetupPresented = false
         await rebuildReminderSchedule()
     }
@@ -355,29 +295,90 @@ final class AppStore: ObservableObject {
         UIApplication.shared.open(url)
     }
 
+    func handlePremiumButtonTap() {
+        premiumErrorMessage = nil
+
+        if isPremiumUnlocked {
+            isPremiumManagementConfirmationPresented = true
+            return
+        }
+
+        Task { await purchasePremiumSubscription() }
+    }
+
+    func cancelPremiumManagementConfirmation() {
+        isPremiumManagementConfirmationPresented = false
+    }
+
+    func confirmPremiumManagement() {
+        isPremiumManagementConfirmationPresented = false
+        Task { await openPremiumManagement() }
+    }
+
     func entryForEditing() -> WeightEntryRecord? {
         guard let activeWeightEntryID else { return nil }
         return entries.first(where: { $0.id == activeWeightEntryID })
     }
 
-    var defaultAuthEmail: String {
-        accountEmail ?? legacyCredentials?.email ?? ""
-    }
-
-    var defaultAuthPassword: String {
-        legacyCredentials?.password ?? ""
-    }
-
-    var hasLegacyCredentials: Bool {
-        legacyCredentials != nil
-    }
-
     var hasAccount: Bool {
-        accountEmail != nil
+        activeLocalUserIDString != nil
     }
 
-    var accountEmailDisplay: String {
-        accountEmail ?? legacyCredentials?.email ?? "--"
+    var iCloudStatusTitle: String {
+        switch iCloudSyncState {
+        case .checkingAccount:
+            return "Checking iCloud"
+        case .localOnly:
+            return "Local Only"
+        case .waitingForICloud:
+            return "Waiting for iCloud"
+        case .syncing:
+            return "Syncing"
+        case .synced:
+            return "Synced"
+        case .error:
+            return "Sync Error"
+        }
+    }
+
+    var iCloudStatusAccent: Color {
+        switch iCloudSyncState {
+        case .synced:
+            return BeFitTheme.success
+        case .syncing, .checkingAccount:
+            return BeFitTheme.warning
+        case .localOnly, .waitingForICloud, .error:
+            return BeFitTheme.heart
+        }
+    }
+
+    var lastSuccessfulSyncDisplay: String {
+        guard let lastSuccessfulSyncDate else { return "--" }
+        return Formatters.dateTime.string(from: lastSuccessfulSyncDate)
+    }
+
+    var premiumButtonTitle: String {
+        isPremiumUnlocked ? "Premium Unlocked" : "Unlock Premium"
+    }
+
+    var premiumButtonSubtitle: String {
+        if isPremiumPurchaseInFlight {
+            return "Connecting to the App Store..."
+        }
+
+        if isPremiumUnlocked {
+            if let premiumDisplayPrice {
+                return "\(premiumDisplayPrice) monthly is active. Tap to manage or cancel in Apple subscriptions."
+            }
+
+            return "Premium is active. Tap to manage or cancel in Apple subscriptions."
+        }
+
+        if let premiumDisplayPrice {
+            return "\(premiumDisplayPrice) per month. Adds a premium crown to the BeFit title."
+        }
+
+        return "Monthly subscription. Adds a premium crown to the BeFit title."
     }
 
     var unitSystem: UnitSystem {
@@ -385,7 +386,7 @@ final class AppStore: ObservableObject {
     }
 
     var reminderTimeDisplay: String {
-        Formatters.time.string(from: reminderPreferences.reminderTimeDate())
+        reminderCoordinator.reminderTimeDisplay()
     }
 
     var reminderPermissionDisplay: String {
@@ -606,74 +607,13 @@ final class AppStore: ObservableObject {
         return .new(latestWeightKilograms: currentWeightKilograms, unitSystem: unitSystem)
     }
 
-    private var legacyCredentials: LegacyCredentials? {
-        try? localDataStore?.legacyCredentials()
-    }
-
-    private func handleAuthStateChange(event: AuthChangeEvent, session: Session?) async {
-        switch event {
-        case .signedOut, .userDeleted:
-            await clearAuthenticatedState()
-        case .initialSession, .signedIn, .tokenRefreshed, .userUpdated, .mfaChallengeVerified:
-            guard let session else { return }
-            await applyAuthenticatedSession(session)
-        case .passwordRecovery:
-            break
-        }
-    }
-
-    private func applyAuthenticatedSession(_ session: Session) async {
-        guard isConfigured, currentUserID != session.user.id || !isSyncInFlight else { return }
-
-        currentUserID = session.user.id
-        accountEmail = session.user.email
-        pendingVerificationEmail = nil
-
-        do {
-            try await importLegacyDataIfNeeded(session: session)
-            try await synchronizeCurrentUser()
-        } catch {
-            loadLocalCache(for: session.user.id.uuidString)
-        }
-
-        updateDestinationForAuthenticatedState()
-        refreshReminderState()
-    }
-
-    private func clearAuthenticatedState(using localDataStore: LocalDataStore? = nil) {
-        currentUserID = nil
-        accountEmail = nil
-        profile = nil
-        entries = []
-        isSyncInFlight = false
-        syncReminderPreferences()
-
-        if let pendingVerificationEmail {
-            destination = .emailVerification(pendingVerificationEmail)
+    private func updateDestinationForAvailableLocalState() {
+        guard activeLocalUserIDString != nil else {
+            destination = .metricsOnboarding
             return
         }
 
-        let store = localDataStore ?? self.localDataStore
-
-        do {
-            if let credentials = try store?.legacyCredentials(),
-               !credentials.email.isEmpty {
-                destination = .auth(.register)
-            } else {
-                destination = .auth(.register)
-            }
-        } catch {
-            destination = .auth(.register)
-        }
-    }
-
-    private func updateDestinationForAuthenticatedState() {
-        if let pendingVerificationEmail {
-            destination = .emailVerification(pendingVerificationEmail)
-            return
-        }
-
-        destination = profile == nil ? .metricsOnboarding : .main
+        destination = bootstrapCoordinator.destination(hasSavedProfile: hasRestorableMainContentForActiveAccount)
     }
 
     private var isInMainDestination: Bool {
@@ -683,92 +623,259 @@ final class AppStore: ObservableObject {
         return false
     }
 
+    /// Reloads the active local profile and canonical weight timeline into
+    /// memory without discarding the last known good state on transient errors.
     private func loadLocalCache(for userIDString: String) {
         guard let localDataStore else { return }
 
+        activeLocalUserIDString = userIDString
+        let previousProfile = profile?.userIDString == userIDString ? profile : nil
+        let previousEntries = entries.filter { $0.userIDString == userIDString }
+
         do {
-            profile = try localDataStore.fetchProfile(userIDString: userIDString)
-            entries = try localDataStore.fetchEntries(userIDString: userIDString)
+            if let fetchedProfile = try localDataStore.fetchProfile(userIDString: userIDString) {
+                profile = fetchedProfile
+                try? localDataStore.markProfileCompleted(userIDString: userIDString)
+            } else {
+                profile = previousProfile
+            }
         } catch {
-            profile = nil
-            entries = []
+            profile = previousProfile
+            logger.error("Failed to load profile cache for user \(userIDString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+
+        do {
+            let fetchedEntries = try localDataStore.fetchCanonicalEntries(userIDString: userIDString)
+            if fetchedEntries.isEmpty, !previousEntries.isEmpty {
+                entries = previousEntries
+            } else {
+                entries = fetchedEntries
+            }
+        } catch {
+            entries = previousEntries
+            logger.error("Failed to load entry cache for user \(userIDString, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 
-    private func importLegacyDataIfNeeded(session: Session) async throws {
-        guard let localDataStore,
-              let sessionEmail = session.user.email else {
-            return
-        }
+    private func upsertInMemoryEntry(_ entry: WeightEntryRecord, userIDString: String) {
+        guard entry.userIDString == userIDString else { return }
 
-        let snapshot = try localDataStore.legacyDataSnapshot()
-        guard snapshot.hasData else { return }
-
-        if let credentials = snapshot.credentials,
-           credentials.email.caseInsensitiveCompare(sessionEmail) != .orderedSame {
-            return
-        }
-
-        if let legacyProfile = snapshot.profile {
-            _ = try await remoteService.saveProfile(RemoteProfileWrite(record: legacyProfile, userID: session.user.id))
-        }
-
-        for legacyEntry in snapshot.entries {
-            _ = try await remoteService.saveWeightEntry(RemoteWeightEntryWrite(record: legacyEntry, userID: session.user.id))
-        }
-
-        try localDataStore.migrateLegacyCache(to: session.user.id.uuidString)
-        try localDataStore.clearLegacyAccount()
+        var currentEntries = entries.filter { $0.userIDString == userIDString && $0.id != entry.id }
+        currentEntries.append(entry)
+        entries = WeightTimelineNormalizer.normalize(records: currentEntries).canonicalEntries
     }
 
-    private func synchronizeCurrentUser() async throws {
-        guard let currentUserID,
-              let localDataStore else { return }
-
-        isSyncInFlight = true
-        defer { isSyncInFlight = false }
-
-        let userIDString = currentUserID.uuidString
-
-        if let pendingProfile = try localDataStore.pendingProfile(userIDString: userIDString) {
-            let savedProfile = try await remoteService.saveProfile(
-                RemoteProfileWrite(record: pendingProfile, userID: currentUserID)
-            )
-            _ = try localDataStore.saveRemoteProfile(savedProfile)
-        }
-
-        for pendingEntry in try localDataStore.pendingEntries(userIDString: userIDString) {
-            let savedEntry = try await remoteService.saveWeightEntry(
-                RemoteWeightEntryWrite(record: pendingEntry, userID: currentUserID)
-            )
-            try localDataStore.saveRemoteEntry(savedEntry, userIDString: userIDString)
-        }
-
-        if let remoteProfile = try await remoteService.fetchProfile(userID: currentUserID) {
-            _ = try localDataStore.saveRemoteProfile(remoteProfile)
-        }
-
-        if let finalProfile = try await remoteService.fetchProfile(userID: currentUserID) {
-            _ = try localDataStore.saveRemoteProfile(finalProfile)
-        }
-        let finalEntries = try await remoteService.fetchWeightEntries(userID: currentUserID)
-        try localDataStore.saveRemoteEntries(finalEntries, userIDString: userIDString)
+    private func prepareLocalDataForICloud(using localDataStore: LocalDataStore) throws {
+        let userIDString = try bootstrapCoordinator.prepareLocalData(localDataStore: localDataStore)
+        activeLocalUserIDString = userIDString
         loadLocalCache(for: userIDString)
     }
 
+    private var hasActiveProfileForActiveAccount: Bool {
+        guard let activeLocalUserIDString else { return false }
+        return profile?.userIDString == activeLocalUserIDString
+    }
+
+    private var hasRestorableMainContentForActiveAccount: Bool {
+        hasActiveProfileForActiveAccount
+    }
+
+    private func refreshICloudStateAndSynchronize(
+        presentLoadingState: Bool,
+        forceSync: Bool = false
+    ) async {
+        if presentLoadingState {
+            destination = .loading
+        }
+
+        let availability = await iCloudSyncService.accountAvailability()
+        iCloudAvailability = availability
+
+        switch availability {
+        case .available:
+            do {
+                try await synchronizeCurrentUser(forceSync: forceSync)
+            } catch {
+                lastSyncErrorMessage = error.localizedDescription
+                iCloudSyncState = .error
+                logger.error("iCloud sync failed: \(error.localizedDescription, privacy: .public)")
+                updateDestinationForAvailableLocalState()
+            }
+        case .noAccount:
+            lastSyncErrorMessage = nil
+            iCloudSyncState = hasRestorableMainContentForActiveAccount ? .localOnly : .waitingForICloud
+            updateDestinationForAvailableLocalState()
+        case .temporarilyUnavailable:
+            lastSyncErrorMessage = nil
+            iCloudSyncState = .waitingForICloud
+            updateDestinationForAvailableLocalState()
+        case .restricted:
+            lastSyncErrorMessage = "iCloud access is restricted on this device."
+            iCloudSyncState = .localOnly
+            updateDestinationForAvailableLocalState()
+        case .couldNotDetermine(let message):
+            lastSyncErrorMessage = message
+            iCloudSyncState = .localOnly
+            updateDestinationForAvailableLocalState()
+        }
+
+        refreshReminderState()
+    }
+
+    /// Reconciles the active local dataset with the user's private iCloud
+    /// records. Local writes remain authoritative until they are uploaded.
+    private func synchronizeCurrentUser(forceSync: Bool = false) async throws {
+        guard let localDataStore,
+              let userIDString = activeLocalUserIDString else { return }
+
+        _ = forceSync
+
+        guard !isSyncInFlight else { return }
+        isSyncInFlight = true
+        defer { isSyncInFlight = false }
+
+        iCloudSyncState = .syncing
+        logger.debug("Starting iCloud sync for local dataset \(userIDString, privacy: .public)")
+
+        let remoteSnapshot = try await iCloudSyncService.fetchSnapshot()
+        let normalizedRemoteEntries = bootstrapCoordinator.normalizeRemoteEntries(remoteSnapshot.entries)
+        if let remoteProfile = remoteSnapshot.profile {
+            _ = try localDataStore.saveSyncedProfile(remoteProfile, userIDString: userIDString)
+            try? localDataStore.markProfileCompleted(userIDString: userIDString)
+        }
+        if !normalizedRemoteEntries.canonicalEntries.isEmpty {
+            try localDataStore.saveSyncedEntries(normalizedRemoteEntries.canonicalEntries, userIDString: userIDString)
+        }
+        if normalizedRemoteEntries.hasDuplicates {
+            try await iCloudSyncService.deleteEntries(with: normalizedRemoteEntries.duplicateEntryIDs)
+        }
+
+        let localNormalization = try localDataStore.normalizeEntryTimeline(userIDString: userIDString)
+        if localNormalization.hasDuplicates {
+            try await iCloudSyncService.deleteEntries(with: localNormalization.duplicateEntryIDs)
+        }
+
+        loadLocalCache(for: userIDString)
+
+        let pendingProfile = if let profile,
+            profile.userIDString == userIDString,
+            profile.needsSync {
+            SyncedProfileSnapshot(record: profile)
+        } else {
+            try localDataStore.pendingProfile(userIDString: userIDString).map(SyncedProfileSnapshot.init(record:))
+        }
+
+        if let pendingProfile {
+            logger.debug("Uploading pending profile to iCloud")
+            let savedProfile = try await iCloudSyncService.saveProfile(pendingProfile)
+            _ = try localDataStore.saveSyncedProfile(
+                savedProfile,
+                userIDString: userIDString
+            )
+        }
+
+        let inMemoryPendingEntries = entries
+            .filter { $0.userIDString == userIDString && $0.needsSync }
+            .sorted { $0.updatedAt < $1.updatedAt }
+        let pendingEntries = inMemoryPendingEntries.isEmpty
+            ? try localDataStore.pendingEntries(userIDString: userIDString)
+            : inMemoryPendingEntries
+
+        for pendingEntry in pendingEntries {
+            logger.debug("Uploading pending weight entry \(pendingEntry.id.uuidString, privacy: .public) to iCloud")
+            let savedEntry = try await iCloudSyncService.saveEntry(
+                SyncedWeightEntrySnapshot(record: pendingEntry)
+            )
+            try localDataStore.saveSyncedEntry(savedEntry, userIDString: userIDString)
+        }
+
+        lastSyncErrorMessage = nil
+        iCloudSyncState = .synced
+        lastSuccessfulSyncDate = .now
+        await iCloudSyncService.recordSuccessfulSync(at: lastSuccessfulSyncDate ?? .now)
+        loadLocalCache(for: userIDString)
+        updateDestinationForAvailableLocalState()
+        refreshReminderState()
+    }
+
     private func syncAfterLocalMutation() async {
-        do {
-            try await synchronizeCurrentUser()
-        } catch {
-            if let currentUserID {
-                loadLocalCache(for: currentUserID.uuidString)
+        await refreshICloudStateAndSynchronize(presentLoadingState: false)
+    }
+
+    private func restoreCachedPremiumState() {
+        isPremiumUnlocked = premiumCoordinator.restoreCachedState()
+    }
+
+    private func presentICloudInfoIfNeeded() {
+        guard !iCloudInfoPreferences.hasShownPrompt() else { return }
+        isICloudInfoPresented = true
+    }
+
+    private func startPremiumObservationIfNeeded() {
+        guard premiumUpdatesTask == nil else { return }
+
+        premiumUpdatesTask = Task { [weak self] in
+            guard let self else { return }
+
+            for await update in premiumCoordinator.transactionUpdates {
+                await premiumCoordinator.finishIfNeeded(update)
+                await self.refreshPremiumSubscriptionState()
             }
         }
     }
 
-    private func syncReminderPreferences() {
-        isDailyReminderEnabled = reminderPreferences.isReminderEnabled()
-        reminderTimeSelection = reminderPreferences.reminderTimeDate()
+    private func refreshPremiumSubscriptionState(shouldSurfaceErrors: Bool = false) async {
+        let storefrontState = await premiumCoordinator.refreshState()
+        isPremiumUnlocked = storefrontState.isUnlocked
+        premiumDisplayPrice = storefrontState.displayPrice
+
+        if !storefrontState.isUnlocked {
+            isPremiumManagementConfirmationPresented = false
+        }
+
+        if shouldSurfaceErrors {
+            premiumErrorMessage = nil
+        }
+    }
+
+    private func purchasePremiumSubscription() async {
+        guard !isPremiumPurchaseInFlight else { return }
+
+        isPremiumPurchaseInFlight = true
+        premiumErrorMessage = nil
+        defer { isPremiumPurchaseInFlight = false }
+
+        do {
+            let result = try await premiumCoordinator.purchasePremium()
+            switch result {
+            case .purchased:
+                await refreshPremiumSubscriptionState(shouldSurfaceErrors: true)
+            case .cancelled:
+                break
+            case .pending:
+                premiumErrorMessage = "Premium purchase is pending approval."
+            }
+        } catch {
+            logger.error("Premium purchase failed: \(error.localizedDescription, privacy: .public)")
+            premiumErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func openPremiumManagement() async {
+        premiumErrorMessage = nil
+
+        do {
+            try await premiumCoordinator.openManageSubscriptions()
+        } catch {
+            logger.error("Opening Premium management failed: \(error.localizedDescription, privacy: .public)")
+            premiumErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func applyReminderPreferenceSnapshot() {
+        let snapshot = reminderCoordinator.preferenceSnapshot()
+        isDailyReminderEnabled = snapshot.isReminderEnabled
+        reminderTimeSelection = snapshot.reminderTimeSelection
     }
 
     private func refreshReminderState() {
@@ -779,75 +886,30 @@ final class AppStore: ObservableObject {
     }
 
     private func refreshReminderAuthorizationStatus() async {
-        guard let reminderService else { return }
-        reminderAuthorizationStatus = await reminderService.authorizationStatus()
+        reminderAuthorizationStatus = await reminderCoordinator.refreshAuthorizationStatus(
+            using: reminderService
+        )
     }
 
     private func requestReminderAuthorizationIfNeeded() async -> ReminderAuthorizationStatus {
-        guard let reminderService else { return .denied }
-
-        let currentStatus = await reminderService.authorizationStatus()
-        switch currentStatus {
-        case .authorized, .denied:
-            reminderAuthorizationStatus = currentStatus
-            return currentStatus
-        case .notDetermined:
-            let requestedStatus = await reminderService.requestAuthorization()
-            reminderAuthorizationStatus = requestedStatus
-            return requestedStatus
-        }
+        let requestedStatus = await reminderCoordinator.requestAuthorizationIfNeeded(
+            currentStatus: reminderAuthorizationStatus,
+            using: reminderService
+        )
+        reminderAuthorizationStatus = requestedStatus
+        return requestedStatus
     }
 
     private func rebuildReminderSchedule() async {
-        guard let reminderService else { return }
-
-        syncReminderPreferences()
-
-        guard isInMainDestination,
-              hasAccount,
-              profile != nil,
-              isDailyReminderEnabled,
-              reminderAuthorizationStatus == .authorized else {
-            await reminderService.removeAllReminders()
-            return
-        }
-
-        let reminderDates = ReminderPlanner.scheduleDates(
-            now: .now,
-            preferredTime: reminderPreferences.reminderTimeComponents(),
+        applyReminderPreferenceSnapshot()
+        await reminderCoordinator.rebuildSchedule(
+            using: reminderService,
+            isInMainDestination: isInMainDestination,
+            hasAccount: hasAccount,
+            profile: profile,
             entries: entries,
-            horizonDays: 60
+            reminderAuthorizationStatus: reminderAuthorizationStatus
         )
-
-        await reminderService.replaceReminders(dates: reminderDates)
-    }
-}
-
-enum AppStateError: LocalizedError {
-    case notAuthenticated
-
-    var errorDescription: String? {
-        switch self {
-        case .notAuthenticated:
-            return "Please sign in again to continue."
-        }
-    }
-}
-
-enum ValidationError: LocalizedError {
-    case invalidMetrics
-    case invalidWeightEntry
-    case futureWeightEntryDate
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidMetrics:
-            return "Please complete all body metrics with valid values."
-        case .invalidWeightEntry:
-            return "Please enter a valid weight before saving."
-        case .futureWeightEntryDate:
-            return "Future dates are not allowed. Please select today or an earlier date."
-        }
     }
 }
 
@@ -858,218 +920,14 @@ struct WeeklyAverageRow: Identifiable {
     var id: Date { date }
 }
 
-enum ReminderSetupMode {
-    case firstPrompt
-    case editTime
+struct ICloudInfoPromptStore {
+    private let shownKey = "befit.icloud-info.shown"
 
-    var title: String {
-        switch self {
-        case .firstPrompt:
-            return "Daily Reminders"
-        case .editTime:
-            return "Reminder Time"
-        }
+    func hasShownPrompt() -> Bool {
+        UserDefaults.standard.bool(forKey: shownKey)
     }
 
-    var subtitle: String {
-        switch self {
-        case .firstPrompt:
-            return "Choose when BeFit should remind you to log your weight."
-        case .editTime:
-            return "Update the time BeFit should remind you each day."
-        }
-    }
-
-    var primaryActionTitle: String {
-        switch self {
-        case .firstPrompt:
-            return "Allow Notifications"
-        case .editTime:
-            return "Save Time"
-        }
-    }
-
-    var secondaryActionTitle: String {
-        switch self {
-        case .firstPrompt:
-            return "Not Now"
-        case .editTime:
-            return "Cancel"
-        }
-    }
-}
-
-enum ReminderAuthorizationStatus {
-    case notDetermined
-    case authorized
-    case denied
-}
-
-struct ReminderPreferencesStore {
-    private let enabledKey = "befit.reminders.enabled"
-    private let hourKey = "befit.reminders.hour"
-    private let minuteKey = "befit.reminders.minute"
-    private let promptHandledKey = "befit.reminders.prompt-handled"
-
-    func isReminderEnabled() -> Bool {
-        UserDefaults.standard.bool(forKey: enabledKey)
-    }
-
-    func setReminderEnabled(_ isEnabled: Bool) {
-        UserDefaults.standard.set(isEnabled, forKey: enabledKey)
-    }
-
-    func hasHandledInitialPrompt() -> Bool {
-        UserDefaults.standard.bool(forKey: promptHandledKey)
-    }
-
-    func setHasHandledInitialPrompt(_ hasHandled: Bool) {
-        UserDefaults.standard.set(hasHandled, forKey: promptHandledKey)
-    }
-
-    func reminderTimeComponents() -> DateComponents {
-        let storedHour = UserDefaults.standard.object(forKey: hourKey) as? Int
-        let storedMinute = UserDefaults.standard.object(forKey: minuteKey) as? Int
-
-        return DateComponents(
-            hour: storedHour ?? 8,
-            minute: storedMinute ?? 0
-        )
-    }
-
-    func reminderTimeDate() -> Date {
-        let calendar = Calendar.current
-        let now = Date()
-        let components = reminderTimeComponents()
-        return calendar.date(
-            bySettingHour: components.hour ?? 8,
-            minute: components.minute ?? 0,
-            second: 0,
-            of: now
-        ) ?? now
-    }
-
-    func setReminderTime(_ date: Date) {
-        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
-        UserDefaults.standard.set(components.hour ?? 8, forKey: hourKey)
-        UserDefaults.standard.set(components.minute ?? 0, forKey: minuteKey)
-    }
-
-    static func defaultTimeDate() -> Date {
-        ReminderPreferencesStore().reminderTimeDate()
-    }
-}
-
-enum ReminderPlanner {
-    static func scheduleDates(
-        now: Date,
-        preferredTime: DateComponents,
-        entries: [WeightEntryRecord],
-        horizonDays: Int
-    ) -> [Date] {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: now)
-        let loggedDays = Set(entries.map { calendar.startOfDay(for: $0.date) })
-
-        return (0..<horizonDays).compactMap { offset in
-            guard let day = calendar.date(byAdding: .day, value: offset, to: today),
-                  !loggedDays.contains(day),
-                  let scheduledDate = calendar.date(
-                    bySettingHour: preferredTime.hour ?? 8,
-                    minute: preferredTime.minute ?? 0,
-                    second: 0,
-                    of: day
-                  ),
-                  scheduledDate > now else {
-                return nil
-            }
-
-            return scheduledDate
-        }
-    }
-}
-
-protocol ReminderNotificationService {
-    func authorizationStatus() async -> ReminderAuthorizationStatus
-    func requestAuthorization() async -> ReminderAuthorizationStatus
-    func replaceReminders(dates: [Date]) async
-    func removeAllReminders() async
-}
-
-struct LocalReminderNotificationService: ReminderNotificationService {
-    private let center: UNUserNotificationCenter
-    private let identifierPrefix = "befit.weight-reminder."
-
-    init(center: UNUserNotificationCenter = .current()) {
-        self.center = center
-    }
-
-    func authorizationStatus() async -> ReminderAuthorizationStatus {
-        let settings = await notificationSettings()
-        switch settings.authorizationStatus {
-        case .authorized, .provisional, .ephemeral:
-            return .authorized
-        case .denied:
-            return .denied
-        case .notDetermined:
-            return .notDetermined
-        @unknown default:
-            return .denied
-        }
-    }
-
-    func requestAuthorization() async -> ReminderAuthorizationStatus {
-        let granted = await withCheckedContinuation { continuation in
-            center.requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
-                continuation.resume(returning: granted)
-            }
-        }
-
-        if granted {
-            return .authorized
-        }
-
-        return await authorizationStatus()
-    }
-
-    func replaceReminders(dates: [Date]) async {
-        await removeAllReminders()
-
-        let calendar = Calendar.current
-
-        for date in dates {
-            let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
-            let content = UNMutableNotificationContent()
-            content.title = "Log your weight"
-            content.body = "Open BeFit and add today's check-in."
-            content.sound = .default
-
-            let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
-            let identifier = "\(identifierPrefix)\(Int(date.timeIntervalSince1970))"
-            let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
-            try? await center.add(request)
-        }
-    }
-
-    func removeAllReminders() async {
-        let pendingRequests = await pendingRequests()
-        let identifiers = pendingRequests.map(\.identifier).filter { $0.hasPrefix(identifierPrefix) }
-        center.removePendingNotificationRequests(withIdentifiers: identifiers)
-    }
-
-    private func notificationSettings() async -> UNNotificationSettings {
-        await withCheckedContinuation { continuation in
-            center.getNotificationSettings { settings in
-                continuation.resume(returning: settings)
-            }
-        }
-    }
-
-    private func pendingRequests() async -> [UNNotificationRequest] {
-        await withCheckedContinuation { continuation in
-            center.getPendingNotificationRequests { requests in
-                continuation.resume(returning: requests)
-            }
-        }
+    func setHasShownPrompt(_ hasShown: Bool) {
+        UserDefaults.standard.set(hasShown, forKey: shownKey)
     }
 }

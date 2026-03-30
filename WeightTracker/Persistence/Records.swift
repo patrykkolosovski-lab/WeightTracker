@@ -15,6 +15,29 @@ final class AccountRecord {
 }
 
 @Model
+final class LocalAccountStateRecord {
+    @Attribute(.unique) var userIDString: String
+    var email: String
+    var allowsLocalAccessWithoutSession: Bool
+    var hasCompletedProfile: Bool
+    var lastActivatedAt: Date
+
+    init(
+        userIDString: String,
+        email: String,
+        allowsLocalAccessWithoutSession: Bool = true,
+        hasCompletedProfile: Bool = false,
+        lastActivatedAt: Date = .now
+    ) {
+        self.userIDString = userIDString
+        self.email = email
+        self.allowsLocalAccessWithoutSession = allowsLocalAccessWithoutSession
+        self.hasCompletedProfile = hasCompletedProfile
+        self.lastActivatedAt = lastActivatedAt
+    }
+}
+
+@Model
 final class ProfileRecord {
     var userIDString: String?
     var age: Int

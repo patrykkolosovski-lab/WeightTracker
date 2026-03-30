@@ -5,10 +5,16 @@ DerivedData/
 build/
 *.xcuserstate
 xcuserdata/
+*.xcresult
 
 # Swift Package Manager
 .build/
 
 # Local tooling
 .codex/
+.agents/
 *.log
+
+# Local backups and scratch files
+WeightTracker-1/
+image.png

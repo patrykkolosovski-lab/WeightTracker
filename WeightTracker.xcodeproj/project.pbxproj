@@ -6,12 +6,9 @@
 	objectVersion = 77;
 	objects = {
 
-/* Begin PBXBuildFile section */
-		A10000012F800001002EF4AD /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = A10000032F800001002EF4AD /* Supabase */; };
-/* End PBXBuildFile section */
-
 /* Begin PBXFileReference section */
 		9E59B2E62F72163E002EF4AD /* WeightTracker.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WeightTracker.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000013A29000100000001 /* WeightTrackerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WeightTrackerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -20,14 +17,35 @@
 			path = WeightTracker;
 			sourceTree = "<group>";
 		};
+		A10000023A29000100000001 /* WeightTrackerTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = WeightTrackerTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXContainerItemProxy section */
+		A10000073A29000100000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 9E59B2DE2F72163E002EF4AD /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 9E59B2E52F72163E002EF4AD;
+			remoteInfo = WeightTracker;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		9E59B2E32F72163E002EF4AD /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A10000012F800001002EF4AD /* Supabase in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000033A29000100000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -38,6 +56,7 @@
 			isa = PBXGroup;
 			children = (
 				9E59B2E82F72163E002EF4AD /* WeightTracker */,
+				A10000023A29000100000001 /* WeightTrackerTests */,
 				9E59B2E72F72163E002EF4AD /* Products */,
 			);
 			sourceTree = "<group>";
@@ -46,6 +65,7 @@
 			isa = PBXGroup;
 			children = (
 				9E59B2E62F72163E002EF4AD /* WeightTracker.app */,
+				A10000013A29000100000001 /* WeightTrackerTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -70,11 +90,33 @@
 			);
 			name = WeightTracker;
 			packageProductDependencies = (
-				A10000032F800001002EF4AD /* Supabase */,
 			);
 			productName = WeightTracker;
 			productReference = 9E59B2E62F72163E002EF4AD /* WeightTracker.app */;
 			productType = "com.apple.product-type.application";
+		};
+		A10000063A29000100000001 /* WeightTrackerTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000093A29000100000001 /* Build configuration list for PBXNativeTarget "WeightTrackerTests" */;
+			buildPhases = (
+				A10000053A29000100000001 /* Sources */,
+				A10000033A29000100000001 /* Frameworks */,
+				A10000043A29000100000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A10000083A29000100000001 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A10000023A29000100000001 /* WeightTrackerTests */,
+			);
+			name = WeightTrackerTests;
+			packageProductDependencies = (
+			);
+			productName = WeightTrackerTests;
+			productReference = A10000013A29000100000001 /* WeightTrackerTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
 
@@ -89,6 +131,10 @@
 					9E59B2E52F72163E002EF4AD = {
 						CreatedOnToolsVersion = 26.3;
 					};
+					A10000063A29000100000001 = {
+						CreatedOnToolsVersion = 26.3;
+						TestTargetID = 9E59B2E52F72163E002EF4AD;
+					};
 				};
 			};
 			buildConfigurationList = 9E59B2E12F72163E002EF4AD /* Build configuration list for PBXProject "WeightTracker" */;
@@ -101,7 +147,6 @@
 			mainGroup = 9E59B2DD2F72163E002EF4AD;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				A10000022F800001002EF4AD /* XCRemoteSwiftPackageReference "supabase-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 9E59B2E72F72163E002EF4AD /* Products */;
@@ -109,12 +154,20 @@
 			projectRoot = "";
 			targets = (
 				9E59B2E52F72163E002EF4AD /* WeightTracker */,
+				A10000063A29000100000001 /* WeightTrackerTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		9E59B2E42F72163E002EF4AD /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000043A29000100000001 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -131,7 +184,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A10000053A29000100000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A10000083A29000100000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 9E59B2E52F72163E002EF4AD /* WeightTracker */;
+			targetProxy = A10000073A29000100000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		9E59B2EF2F72163F002EF4AD /* Debug */ = {
@@ -258,11 +326,15 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = WeightTracker/WeightTracker.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = ZM656KTYH9;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = WeightTracker-Info.plist;
+				INFOPLIST_FILE = "WeightTracker-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = BeFit;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -285,11 +357,15 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = WeightTracker/WeightTracker.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = ZM656KTYH9;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = WeightTracker-Info.plist;
+				INFOPLIST_FILE = "WeightTracker-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = BeFit;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -304,6 +380,56 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		A10000103A29000100000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = ZM656KTYH9;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = PatrykKolosovski.WeightTrackerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WeightTracker.app/WeightTracker";
+			};
+			name = Debug;
+		};
+		A10000113A29000100000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = ZM656KTYH9;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = PatrykKolosovski.WeightTrackerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WeightTracker.app/WeightTracker";
 			};
 			name = Release;
 		};
@@ -328,26 +454,16 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		A10000093A29000100000001 /* Build configuration list for PBXNativeTarget "WeightTrackerTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000103A29000100000001 /* Debug */,
+				A10000113A29000100000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-		A10000022F800001002EF4AD /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/supabase/supabase-swift";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.30.0;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		A10000032F800001002EF4AD /* Supabase */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A10000022F800001002EF4AD /* XCRemoteSwiftPackageReference "supabase-swift" */;
-			productName = Supabase;
-		};
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 9E59B2DE2F72163E002EF4AD /* Project object */;
 }

@@ -14,10 +14,6 @@ struct AppRootView: View {
             case .loading:
                 ProgressView()
                     .tint(BeFitTheme.textPrimary)
-            case .auth(let mode):
-                AuthenticationView(store: store, mode: mode)
-            case .emailVerification(let email):
-                EmailVerificationView(store: store, email: email)
             case .metricsOnboarding:
                 MetricsOnboardingView(store: store)
             case .main:
@@ -26,6 +22,11 @@ struct AppRootView: View {
         }
         .task {
             await store.configureIfNeeded(modelContext: modelContext)
+        }
+        .sheet(isPresented: $store.isICloudInfoPresented) {
+            ICloudInfoSheet {
+                store.dismissICloudInfo()
+            }
         }
         .onChange(of: scenePhase) { _, newValue in
             store.handleScenePhaseChange(newValue)
@@ -36,5 +37,5 @@ struct AppRootView: View {
 
 #Preview {
     AppRootView()
-        .modelContainer(for: [AccountRecord.self, ProfileRecord.self, WeightEntryRecord.self], inMemory: true)
+        .modelContainer(for: [AccountRecord.self, LocalAccountStateRecord.self, ProfileRecord.self, WeightEntryRecord.self], inMemory: true)
 }

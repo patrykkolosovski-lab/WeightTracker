@@ -13,6 +13,11 @@ enum BeFitTheme {
     static let warning = Color.orange
     static let success = Color.green
     static let danger = Color.red.opacity(0.88)
+    static let premiumTop = Color(hex: "FFE08A")
+    static let premiumMiddle = Color(hex: "FFB347")
+    static let premiumBottom = Color(hex: "C77600")
+    static let premiumInk = Color(hex: "2B1600")
+    static let premiumGlow = Color(hex: "FFCC66").opacity(0.22)
 
     static let backgroundGradient = LinearGradient(
         colors: [backgroundTop, backgroundMiddle, backgroundBottom],
@@ -50,6 +55,13 @@ enum Formatters {
 
     static let time: DateFormatter = {
         let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    static let dateTime: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return formatter
     }()

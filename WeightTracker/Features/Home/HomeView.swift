@@ -37,13 +37,13 @@ struct HomeView: View {
                         statButtonCard(title: "BMI", value: store.bmiDisplay, accent: bmiAccent) {
                             isBMISheetPresented = true
                         }
-                        statButtonCard(title: "Weekly Average", value: store.weeklyAverageDisplay, accent: BeFitTheme.textPrimary) {
+                        statButtonCard(title: "Weekly Average", value: store.weeklyAverageDisplay, accent: BeFitTheme.success) {
                             isWeeklyAverageSheetPresented = true
                         }
                     }
 
                     HStack(spacing: 14) {
-                        statButtonCard(title: "Daily Calories", value: store.dailyCaloriesDisplay, accent: BeFitTheme.warning) {
+                        statButtonCard(title: "Daily Calories", value: store.dailyCaloriesDisplay, accent: BeFitTheme.success) {
                             isCaloriesSheetPresented = true
                         }
                         statButtonCard(title: store.goalCardTitle, value: store.goalButtonDisplay, accent: BeFitTheme.success) {

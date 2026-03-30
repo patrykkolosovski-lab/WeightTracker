@@ -13,8 +13,8 @@ struct BodyMetricsView: View {
                         SectionTitle("Live Overview", subtitle: "Updated from your current edits before saving.")
 
                         HStack {
-                            InlineStat(title: "BMI", value: previewBMI)
-                            InlineStat(title: "Calories", value: previewCalories, accent: BeFitTheme.warning)
+                            InlineStat(title: "BMI", value: previewBMI, accent: previewBMIAccent)
+                            InlineStat(title: "Calories", value: previewCalories, accent: BeFitTheme.success)
                         }
                     }
                 }
@@ -41,15 +41,35 @@ struct BodyMetricsView: View {
     }
 
     private var previewBMI: String {
-        guard let input = form.makeInput(),
+        guard let input = try? form.makeInput(),
               let bmi = BMICalculator.value(weightKilograms: input.currentWeightKilograms, heightCentimeters: input.heightCentimeters) else {
             return "--"
         }
         return Formatters.compactDecimal.string(from: NSNumber(value: bmi)) ?? "--"
     }
 
+    private var previewBMIAccent: Color {
+        guard let input = try? form.makeInput(),
+              let bmi = BMICalculator.value(weightKilograms: input.currentWeightKilograms, heightCentimeters: input.heightCentimeters) else {
+            return BeFitTheme.textPrimary
+        }
+
+        switch bmi {
+        case ..<16:
+            return BeFitTheme.danger
+        case ..<18.5:
+            return BeFitTheme.warning
+        case ..<25:
+            return BeFitTheme.success
+        case ..<30:
+            return BeFitTheme.warning
+        default:
+            return BeFitTheme.danger
+        }
+    }
+
     private var previewCalories: String {
-        guard let input = form.makeInput(),
+        guard let input = try? form.makeInput(),
               let effectiveGoal = GoalLogic.effectiveGoal(
                 currentWeightKilograms: input.currentWeightKilograms,
                 configuration: GoalConfiguration(

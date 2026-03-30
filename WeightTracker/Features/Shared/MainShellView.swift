@@ -5,7 +5,7 @@ struct MainShellView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            BeFitHeader()
+            BeFitHeader(showsPremiumBadge: store.isPremiumUnlocked)
 
             Group {
                 switch store.selectedTab {

@@ -5,15 +5,15 @@ struct MetricsFormFields: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            UnitPickerCard(unitSystem: $form.unitSystem)
+            UnitPickerCard(unitSystem: unitSystemBinding)
 
             BeFitCard {
                 VStack(alignment: .leading, spacing: 16) {
                     SectionTitle("Body Metrics", subtitle: "Required for BMI and calorie targets.")
 
                     BeFitTextField(title: "Age", placeholder: "29", text: $form.ageText, keyboardType: .numberPad)
-                    BeFitTextField(title: "Height (\(form.unitSystem.heightUnit))", placeholder: form.unitSystem == .metric ? "178" : "70", text: $form.heightText, keyboardType: .decimalPad)
-                    BeFitTextField(title: "Current Weight (\(form.unitSystem.weightUnit))", placeholder: form.unitSystem == .metric ? "82.4" : "181.7", text: $form.currentWeightText, keyboardType: .decimalPad)
+                    BeFitTextField(title: "Height (\(form.unitSystem.heightUnit))", placeholder: form.unitSystem == .metric ? "178" : "70", text: heightTextBinding, keyboardType: .decimalPad)
+                    BeFitTextField(title: "Current Weight (\(form.unitSystem.weightUnit))", placeholder: form.unitSystem == .metric ? "82.4" : "181.7", text: currentWeightTextBinding, keyboardType: .decimalPad)
                     pickerRow(
                         title: "Activity Level",
                         selection: $form.activityLevel,
@@ -42,7 +42,7 @@ struct MetricsFormFields: View {
                     }
 
                     if form.goalMode == .target {
-                        BeFitTextField(title: "Target Weight (\(form.unitSystem.weightUnit))", placeholder: form.unitSystem == .metric ? "75.0" : "165.3", text: $form.targetWeightText, keyboardType: .decimalPad)
+                        BeFitTextField(title: "Target Weight (\(form.unitSystem.weightUnit))", placeholder: form.unitSystem == .metric ? "75.0" : "165.3", text: targetWeightTextBinding, keyboardType: .decimalPad)
 
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Target Date")
@@ -80,18 +80,43 @@ struct MetricsFormFields: View {
                             }
                         }
 
-                        BeFitTextField(title: "Target Weight (\(form.unitSystem.weightUnit))", placeholder: "Optional", text: $form.targetWeightText, keyboardType: .decimalPad)
+                        BeFitTextField(title: "Target Weight (\(form.unitSystem.weightUnit))", placeholder: "Optional", text: targetWeightTextBinding, keyboardType: .decimalPad)
                     }
                 }
             }
-        }
-        .onChange(of: form.unitSystem) { oldValue, newValue in
-            form.convertDisplayedValues(from: oldValue, to: newValue)
         }
     }
 }
 
 private extension MetricsFormFields {
+    var unitSystemBinding: Binding<UnitSystem> {
+        Binding(
+            get: { form.unitSystem },
+            set: { form.setUnitSystem($0) }
+        )
+    }
+
+    var heightTextBinding: Binding<String> {
+        Binding(
+            get: { form.heightText },
+            set: { form.setHeightText($0) }
+        )
+    }
+
+    var currentWeightTextBinding: Binding<String> {
+        Binding(
+            get: { form.currentWeightText },
+            set: { form.setCurrentWeightText($0) }
+        )
+    }
+
+    var targetWeightTextBinding: Binding<String> {
+        Binding(
+            get: { form.targetWeightText },
+            set: { form.setTargetWeightText($0) }
+        )
+    }
+
     func pickerRow<Option: Hashable & Identifiable>(
         title: String,
         selection: Binding<Option>,
